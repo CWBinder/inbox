@@ -1,0 +1,26 @@
+# pa config. Lives in ~/.pa/config.toml. Personal: never commit it anywhere public.
+
+[me]
+name = "Your Name"
+whatsapp = "4412345678"        # your own number, digits only; "me" as a recipient resolves to it
+
+[email]
+backend = "ws"                 # the email client pa drives (only "ws" so far)
+default = "work"
+
+[email.accounts.work]
+address = "you@work.example"
+
+[email.accounts.personal]
+address = "you@example.com"
+
+[whatsapp]
+default = "me"
+
+[whatsapp.identities.me]
+profile = "default"            # profile name in the whatsapp client's config.toml
+
+# A second linked number the assistant messages you from. Needs its own
+# profile in the whatsapp client (see its README, "Profiles").
+# [whatsapp.identities.claude]
+# profile = "claude"

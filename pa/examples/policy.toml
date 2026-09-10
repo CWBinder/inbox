@@ -1,0 +1,17 @@
+# pa policy. Lives in ~/.pa/policy.toml.
+# Levels: deny | draft-only | confirm | allow.
+#   confirm: the caller must pass --confirmed, asserting the person approved
+#            this exact recipient and text. An earlier yes never covers a later message.
+# Missing keys default to the most restrictive level.
+
+[email]
+send = "draft-only"            # drafts are the ceiling
+destructive = "deny"           # trash, draft-delete
+
+[whatsapp]
+send = "confirm"               # every send as yourself needs a per-message yes
+
+# The assistant identity may message you, and only you, without asking.
+# [whatsapp.identities.claude]
+# send = "allow"
+# allow_to = ["me"]
