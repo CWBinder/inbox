@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 
-from . import __version__, channels, config, log, paths, policy
+from . import __version__, channels, config, log, paths, policy, reminders, when
 
 
 # ---- init / status -----------------------------------------------------------
@@ -48,6 +48,7 @@ def cmd_status(a):
         except (json.JSONDecodeError, KeyError):
             print(f"whatsapp:{ident:<9} status failed: {r.stderr.strip() or r.stdout.strip()}")
             ok = False
+    print(f"remind     timer {'installed' if reminders.timer_installed() else 'not installed (pa remind install)'}")
     if config.email_accounts():
         r = subprocess.run(["ws", "email", "accounts"], capture_output=True, text=True)
         for line in (r.stdout + r.stderr).splitlines():
@@ -143,6 +144,58 @@ def _flag(argv: list[str], name: str) -> str | None:
     return None
 
 
+
+# ---- reminders ---------------------------------------------------------------
+
+def _fmt_reminder(r):
+    flag = {"pending": " ", "snoozed": "z", "sent": ">", "done": "x"}.get(r.status, "?")
+    refs = ("  " + " ".join(r.refs)) if r.refs else ""
+    return f"[{flag}] {r.id:<14} {when.fmt(r.due_dt):<17} {r.text}{refs}"
+
+
+def cmd_remind(a):
+    if a.remind_command == "add":
+        try:
+            due = when.parse(a.due)
+        except when.WhenError as e:
+            raise SystemExit(str(e))
+        r = reminders.add(" ".join(a.text), due, a.ref or [], channel=a.channel)
+        print(_fmt_reminder(r))
+    elif a.remind_command == "list":
+        horizon = None
+        if a.due_within:
+            horizon = when.parse("in " + a.due_within) if a.due_within[0].isdigit() else when.parse(a.due_within)
+        rows = [r for r in reminders.all_reminders() if a.all or r.status in ("pending", "snoozed", "sent")]
+        rows += reminders.ws_due_tasks(within=(horizon - when._now()) if horizon else None)
+        if horizon:
+            rows = [r for r in rows if r.due_dt <= horizon]
+        if a.json:
+            print(json.dumps([r.__dict__ for r in rows], ensure_ascii=False, indent=2, default=str)); return
+        if not rows:
+            print("nothing due" if horizon else "no reminders"); return
+        for r in sorted(rows, key=lambda r: r.due):
+            print(_fmt_reminder(r))
+    elif a.remind_command == "run":
+        report = reminders.run(dry_run=a.dry_run)
+        print("\n".join(report) if report else "nothing due")
+    elif a.remind_command == "done":
+        print(reminders.mark_done(a.id))
+    elif a.remind_command == "snooze":
+        try:
+            until = when.parse(a.until)
+        except when.WhenError as e:
+            raise SystemExit(str(e))
+        print(reminders.snooze(a.id, until))
+    elif a.remind_command == "install":
+        print(reminders.install_timer(a.every))
+    elif a.remind_command == "uninstall":
+        print(reminders.uninstall_timer())
+    elif a.remind_command == "show":
+        r = reminders.get(a.id)
+        print(json.dumps(r.__dict__, ensure_ascii=False, indent=2))
+        print("--- as it would be sent ---")
+        print(reminders.render(r))
+
 # ---- policy / log ------------------------------------------------------------
 
 def cmd_policy(a):
@@ -194,6 +247,25 @@ def build_parser():
     s.add_argument("--account", default=None, help="which mailbox (config: [email.accounts]); default from config")
     s.add_argument("args", nargs=argparse.REMAINDER, help="passed to the email client; add --confirmed for send/trash")
     s.set_defaults(func=cmd_email)
+
+    s = sub.add_parser("remind", help="reminders: add, list, run the loop, done, snooze")
+    rs = s.add_subparsers(dest="remind_command", required=True)
+    r = rs.add_parser("add", help="new reminder: pa remind add pay the fee --due fri 9am --ref url:https://...")
+    r.add_argument("text", nargs="+"); r.add_argument("--due", required=True, help="'2026-09-12 16:00', 'fri 9am', 'tomorrow 18:30', 'in 2h'")
+    r.add_argument("--ref", action="append", metavar="KIND:VALUE", help="what it is about; repeatable (ws:task:x, email:qmt:<id>, url:..., file:...)")
+    r.add_argument("--channel", default="whatsapp")
+    r = rs.add_parser("list", help="open reminders plus due ws tasks")
+    r.add_argument("--due-within", metavar="SPAN", help="e.g. 2d, 12h; only what is due by then")
+    r.add_argument("--all", action="store_true", help="include done ones"); r.add_argument("--json", action="store_true")
+    r = rs.add_parser("run", help="fire everything due: what a launchd timer calls")
+    r.add_argument("--dry-run", action="store_true", help="show what would be sent, send nothing")
+    r = rs.add_parser("done", help="close a reminder, or a ws task via its ws:<key> id"); r.add_argument("id")
+    r = rs.add_parser("snooze", help="push a reminder"); r.add_argument("id"); r.add_argument("--until", required=True)
+    r = rs.add_parser("show", help="one reminder and the message it would produce"); r.add_argument("id")
+    r = rs.add_parser("install", help="launchd timer that runs `pa remind run` on this Mac")
+    r.add_argument("--every", type=int, default=10, metavar="MINUTES")
+    rs.add_parser("uninstall", help="remove the timer")
+    s.set_defaults(func=cmd_remind)
 
     s = sub.add_parser("policy", help="show the send and confirmation rules")
     s.set_defaults(func=cmd_policy)
