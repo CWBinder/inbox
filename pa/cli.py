@@ -58,11 +58,44 @@ def cmd_status(a):
     sys.exit(0 if ok else 1)
 
 
+
+# ---- pass-through groups ------------------------------------------------------
+
+def _passthrough(sub, name, func, commands: dict, description: str, usage: str, examples: str):
+    """A group whose subcommands are the client's own. `pa NAME SUB -h` shows the
+    client's help for SUB; `pa NAME -h` lists the subcommands with one line each."""
+    width = max(len(c) for c in commands)
+    listing = "\n".join(f"  {c:<{width}}  {h}" for c, h in commands.items())
+    s = sub.add_parser(name, help=description.split(".")[0], description=description, usage=usage,
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog=f"subcommands:\n{listing}\n\nexamples:\n  {examples}")
+    s.add_argument("args", nargs=argparse.REMAINDER, metavar="SUBCOMMAND [ARGS...]", help=argparse.SUPPRESS)
+    s.set_defaults(func=func, _commands=commands, _group=name)
+    return s
+
+
+def _check_passthrough(a, client_argv_prefix: list[str]):
+    """Validate the subcommand; forward -h to the client; explain an omitted subcommand."""
+    rest = list(a.args)
+    sub = rest[0] if rest else None
+    if sub in (None, "-h", "--help") or sub.startswith("-"):
+        hint = f"pa {a._group} needs a subcommand first, e.g. `pa {a._group} recent {' '.join(rest)}`" if sub and sub.startswith("-") else ""
+        print(hint or f"usage: pa {a._group} SUBCOMMAND [ARGS...]", file=sys.stderr)
+        print("subcommands: " + ", ".join(a._commands) + f"   (pa {a._group} -h for details)", file=sys.stderr)
+        sys.exit(2)
+    if sub not in a._commands:
+        print(f"unknown subcommand '{sub}'; pa {a._group} knows: " + ", ".join(a._commands), file=sys.stderr)
+        sys.exit(2)
+    if "-h" in rest[1:] or "--help" in rest[1:]:
+        r = subprocess.run([*client_argv_prefix, sub, "-h"], text=True)
+        sys.exit(r.returncode)
+    return rest
+
 # ---- whatsapp ----------------------------------------------------------------
 
 def cmd_wa(a):
-    rest = list(a.args)
-    sub = rest[0] if rest else None
+    rest = _check_passthrough(a, ["whatsapp"])
+    sub = rest[0]
     if sub in ("send", "send-file"):
         return _wa_send(a, sub, rest[1:])
     _, r = channels.whatsapp(a.identity, *rest)
@@ -114,8 +147,8 @@ _EMAIL_DESTRUCTIVE = {"trash": "trash", "draft-delete": "draft-delete"}
 
 
 def cmd_email(a):
-    rest = list(a.args)
-    sub = rest[0] if rest else None
+    rest = _check_passthrough(a, ["ws", "email"])
+    sub = rest[0]
     confirmed = "--confirmed" in rest
     rest = [x for x in rest if x != "--confirmed"]
     account = config.email_account(a.account)
@@ -235,18 +268,45 @@ def build_parser():
     s = sub.add_parser("status", help="every identity, account, bridge and credential in one check")
     s.set_defaults(func=cmd_status)
 
-    s = sub.add_parser("wa", help="WhatsApp through the whatsapp client, identity chosen for you",
-                       usage="pa wa [--as IDENTITY] SUBCOMMAND [ARGS...]   (whatsapp -h lists the subcommands)")
+    WA = {
+        "recent":    "what came in lately, grouped by chat      [--since 24h] [--incoming-only]",
+        "chats":     "conversations, newest first               [-n 20] [--groups|--people] [QUERY]",
+        "read":      "one conversation                          WHO [-n 20] [--after DATE] [--before DATE]",
+        "search":    "find messages by text                     TEXT [--chat WHO] [--from WHO] [-n 20]",
+        "context":   "messages around one message id            MESSAGE_ID",
+        "members":   "who has written in a group                GROUP",
+        "contacts":  "find people by name or number             QUERY",
+        "resolve":   "every address a name maps to              WHO",
+        "download":  "fetch a message's media, voice notes too  MESSAGE_ID [--save DIR]",
+        "send":      "send text (policy-gated, logged)          WHO --body TEXT [--confirmed]",
+        "send-file": "send a file or voice note (policy-gated)  WHO PATH [--voice] [--confirmed]",
+        "bridge":    "the bridge process of this identity       status|start|stop|log|install",
+    }
+    s = _passthrough(sub, "wa", cmd_wa, WA,
+                     "WhatsApp, through the whatsapp client. pa picks the identity and applies policy.",
+                     "pa wa [--as IDENTITY] SUBCOMMAND [ARGS...]",
+                     "pa wa read BJ -n 20        pa wa recent --since 24h        pa wa SUBCOMMAND -h for that command's flags")
     s.add_argument("--as", dest="identity", metavar="IDENTITY", default=None,
-                   help="which linked account to act as (config: [whatsapp.identities]); default from config")
-    s.add_argument("args", nargs=argparse.REMAINDER, help="passed to the whatsapp client")
-    s.set_defaults(func=cmd_wa)
+                   help="act as this identity (config [whatsapp.identities]; default: %s)" % "the config default")
 
-    s = sub.add_parser("email", help="mail through the email client, account chosen for you",
-                       usage="pa email [--account NAME] SUBCOMMAND [ARGS...]   (ws email -h lists the subcommands)")
-    s.add_argument("--account", default=None, help="which mailbox (config: [email.accounts]); default from config")
-    s.add_argument("args", nargs=argparse.REMAINDER, help="passed to the email client; add --confirmed for send/trash")
-    s.set_defaults(func=cmd_email)
+    EMAIL = {
+        "accounts":     "list the accounts and check that each authenticates",
+        "search":       "messages matching a Gmail query           [QUERY] [-n 10]",
+        "read":         "one message, or its whole thread          ID [--thread]",
+        "attachments":  "list or save a message's attachments      ID [--save DIR]",
+        "draft":        "create a draft (logged)                   --to X [--subject S] [--body B] [--reply-to ID] [--attach F]",
+        "drafts":       "list the drafts folder                    [-n 10]",
+        "draft-show":   "print one draft                           DRAFT_ID",
+        "draft-send":   "send a draft (policy-gated)               DRAFT_ID [--confirmed]",
+        "send":         "send immediately (policy-gated)           --to X ... [--confirmed]",
+        "trash":        "move a message to trash (policy-gated)    ID [--confirmed]",
+        "draft-delete": "delete a draft (policy-gated)             DRAFT_ID [--confirmed]",
+    }
+    s = _passthrough(sub, "email", cmd_email, EMAIL,
+                     "Mail, through the ws email client. pa picks the account and applies policy.",
+                     "pa email [--account NAME] SUBCOMMAND [ARGS...]",
+                     "pa email search 'is:unread' -n 5        pa email --account oxai read ID --thread")
+    s.add_argument("--account", default=None, help="which mailbox (config [email.accounts]; default from config)")
 
     s = sub.add_parser("remind", help="reminders: add, list, run the loop, done, snooze")
     rs = s.add_subparsers(dest="remind_command", required=True)
@@ -278,7 +338,13 @@ def build_parser():
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        if getattr(args, "_group", None):           # pass-through groups take anything; the check explains
+            args.args = unknown + list(args.args)
+        else:
+            parser.error("unrecognized arguments: " + " ".join(unknown))
     try:
         args.func(args)
     except BrokenPipeError:
