@@ -285,7 +285,7 @@ def build_parser():
     s = _passthrough(sub, "wa", cmd_wa, WA,
                      "WhatsApp, through the whatsapp client. pa picks the identity and applies policy.",
                      "pa wa [--as IDENTITY] SUBCOMMAND [ARGS...]",
-                     "pa wa read BJ -n 20        pa wa recent --since 24h        pa wa SUBCOMMAND -h for that command's flags")
+                     "pa wa read Alice -n 20        pa wa recent --since 24h        pa wa SUBCOMMAND -h for that command's flags")
     s.add_argument("--as", dest="identity", metavar="IDENTITY", default=None,
                    help="act as this identity (config [whatsapp.identities]; default: %s)" % "the config default")
 
@@ -305,14 +305,14 @@ def build_parser():
     s = _passthrough(sub, "email", cmd_email, EMAIL,
                      "Mail, through the ws email client. pa picks the account and applies policy.",
                      "pa email [--account NAME] SUBCOMMAND [ARGS...]",
-                     "pa email search 'is:unread' -n 5        pa email --account oxai read ID --thread")
+                     "pa email search 'is:unread' -n 5        pa email --account personal read ID --thread")
     s.add_argument("--account", default=None, help="which mailbox (config [email.accounts]; default from config)")
 
     s = sub.add_parser("remind", help="reminders: add, list, run the loop, done, snooze")
     rs = s.add_subparsers(dest="remind_command", required=True)
     r = rs.add_parser("add", help="new reminder: pa remind add pay the fee --due fri 9am --ref url:https://...")
     r.add_argument("text", nargs="+"); r.add_argument("--due", required=True, help="'2026-09-12 16:00', 'fri 9am', 'tomorrow 18:30', 'in 2h'")
-    r.add_argument("--ref", action="append", metavar="KIND:VALUE", help="what it is about; repeatable (ws:task:x, email:qmt:<id>, url:..., file:...)")
+    r.add_argument("--ref", action="append", metavar="KIND:VALUE", help="what it is about; repeatable (ws:task:x, email:work:<id>, url:..., file:...)")
     r.add_argument("--channel", default="whatsapp")
     r = rs.add_parser("list", help="open reminders plus due ws tasks")
     r.add_argument("--due-within", metavar="SPAN", help="e.g. 2d, 12h; only what is due by then")

@@ -2,7 +2,7 @@
 
 A reminder is not a task. It is one JSON file in ~/.pa/reminders/. It may
 carry refs, kind-prefixed strings that point at whatever the reminder is
-about (ws:task:x, email:qmt:<id>, whatsapp:BJ:<id>, file:~/x.pdf, url:...).
+about (ws:task:x, email:work:<id>, whatsapp:Alice:<id>, file:~/x.pdf, url:...).
 pa stores refs, prints them into the message, and follows a kind only when
 the matching tool is installed.
 

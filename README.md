@@ -59,7 +59,7 @@ send switch for that one call, so the client's config can stay off.
 ## Reminders
 
 A reminder is time, text, channel and refs. It is not a task. Refs are text
-with a kind prefix (`ws:task:x`, `email:qmt:<id>`, `whatsapp:BJ:<id>`,
+with a kind prefix (`ws:task:x`, `email:work:<id>`, `whatsapp:Alice:<id>`,
 `url:...`, `file:...`); pa prints them into the message and follows a kind
 only when the matching tool is installed. Reminders go out from the identity
 named in `[reminders] identity` (default `claude`) to `[me].whatsapp`, so
