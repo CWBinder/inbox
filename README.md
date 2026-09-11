@@ -10,7 +10,7 @@ when present and does not need.
 pa
 ├── knows   accounts, identities, who "me" is         ~/.pa/config.toml
 ├── decides what may be sent, by whom, to whom        ~/.pa/policy.toml
-├── drives  whatsapp (any profile), ws email          clients on PATH
+├── drives  whatsapp (any profile), gmail             clients on PATH
 ├── keeps   reminders with refs, and a launchd timer  ~/.pa/reminders/
 └── logs    every send, save, download and refusal    ~/.pa/log/actions.jsonl
 ```
@@ -23,8 +23,8 @@ pa init                       # writes ~/.pa/config.toml and policy.toml from th
 ```
 
 Edit both files. The clients pa drives must be on PATH: the
-[whatsapp](../whatsapp) client for WhatsApp, `ws` for mail (until the Gmail
-client stands alone). `pa status` tells you what is missing.
+[whatsapp](../whatsapp) client for WhatsApp, the [gmail](../gmail-mcp) client
+for mail. `pa status` tells you what is missing.
 
 ## Commands
 
@@ -33,7 +33,7 @@ pa status                                    every identity, account, bridge and
 
 pa wa [--as IDENTITY] SUBCOMMAND ...         whatsapp with the identity's profile; `whatsapp -h` for subcommands
 pa wa send WHO --body TEXT [--confirmed]     policy-gated; logged
-pa email [--account NAME] SUBCOMMAND ...     ws email with the account; add --confirmed for send
+pa email [--account NAME] SUBCOMMAND ...     gmail with the account; add --confirmed for send
 
 pa remind add TEXT --due WHEN [--ref K:V]... 'fri 9am', 'tomorrow 18:30', 'in 2h', '2026-09-12 16:00'
 pa remind list [--due-within 2d] [--all]     your reminders plus due ws tasks

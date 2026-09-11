@@ -33,7 +33,7 @@ def cmd_status(a):
     print(f"pa {__version__}  home {paths.HOME}")
     print(f"config     {'present' if paths.CONFIG.is_file() else 'MISSING (pa init)'}")
     print(f"policy     {'present' if paths.POLICY.is_file() else 'missing: everything defaults to the most restrictive level'}")
-    for cmd in ("whatsapp", "ws"):
+    for cmd in ("whatsapp", "gmail", "ws"):
         print(f"{cmd:<10} {'on PATH' if shutil.which(cmd) else 'NOT on PATH'}")
     print()
     for ident, spec in config.whatsapp_identities().items():
@@ -50,7 +50,7 @@ def cmd_status(a):
             ok = False
     print(f"remind     timer {'installed' if reminders.timer_installed() else 'not installed (pa remind install)'}")
     if config.email_accounts():
-        r = subprocess.run(["ws", "email", "accounts"], capture_output=True, text=True)
+        r = subprocess.run(channels.email_argv(None, "accounts")[1][:-2], capture_output=True, text=True)
         for line in (r.stdout + r.stderr).splitlines():
             if line.startswith(("ok:", "failed:")):
                 print(f"email      {line}")
@@ -147,10 +147,14 @@ _EMAIL_DESTRUCTIVE = {"trash": "trash", "draft-delete": "draft-delete"}
 
 
 def cmd_email(a):
-    rest = _check_passthrough(a, ["ws", "email"])
+    rest = _check_passthrough(a, channels.email_argv(None)[1][:-2])     # the client command without the account flag
     sub = rest[0]
     confirmed = "--confirmed" in rest
     rest = [x for x in rest if x != "--confirmed"]
+    if "--account" in rest:                                    # accept the flag after the subcommand too
+        i = rest.index("--account")
+        a.account = rest[i + 1] if i + 1 < len(rest) else a.account
+        del rest[i:i + 2]
     account = config.email_account(a.account)
     if sub in _EMAIL_SEND:
         verdict = policy.email_send(confirmed)
@@ -303,7 +307,7 @@ def build_parser():
         "draft-delete": "delete a draft (policy-gated)             DRAFT_ID [--confirmed]",
     }
     s = _passthrough(sub, "email", cmd_email, EMAIL,
-                     "Mail, through the ws email client. pa picks the account and applies policy.",
+                     "Mail, through the gmail client. pa picks the account and applies policy.",
                      "pa email [--account NAME] SUBCOMMAND [ARGS...]",
                      "pa email search 'is:unread' -n 5        pa email --account personal read ID --thread")
     s.add_argument("--account", default=None, help="which mailbox (config [email.accounts]; default from config)")

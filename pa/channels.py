@@ -34,10 +34,12 @@ def whatsapp(identity: str | None, *args: str, capture: bool = False, allow_send
 
 def email_argv(account: str | None, *args: str) -> tuple[str, list[str]]:
     name = config.email_account(account)
-    backend = config.load().get("email", {}).get("backend", "ws")
-    if backend == "ws":
+    backend = config.load().get("email", {}).get("backend", "gmail")
+    if backend == "gmail":
+        return name, ["gmail", *args, "--account", name]
+    if backend == "ws":                                   # the pre-split spelling
         return name, ["ws", "email", *args, "--account", name]
-    raise SystemExit(f"unknown email backend '{backend}' in config (only 'ws' so far)")
+    raise SystemExit(f"unknown email backend '{backend}' in config (gmail or ws)")
 
 
 def email(account: str | None, *args: str, capture: bool = False):

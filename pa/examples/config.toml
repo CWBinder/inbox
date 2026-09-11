@@ -5,7 +5,7 @@ name = "Your Name"
 whatsapp = "4412345678"        # your own number, digits only; "me" as a recipient resolves to it
 
 [email]
-backend = "ws"                 # the email client pa drives (only "ws" so far)
+backend = "gmail"              # the email client pa drives: the standalone `gmail` command
 default = "work"
 
 [email.accounts.work]

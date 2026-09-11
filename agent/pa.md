@@ -10,7 +10,7 @@ directly; it picks the account or identity and applies the person's policy.
 pa status                                   health of every account, bridge and timer
 pa wa recent [--since 24h]                  WhatsApp, as the person
 pa wa read WHO | search TEXT | download ID  any whatsapp subcommand passes through
-pa email search QUERY [--account NAME]      any ws email subcommand passes through
+pa email search QUERY [--account NAME]      any gmail subcommand passes through
 pa email read ID [--thread]
 pa email attachments ID --save DIR
 pa remind list [--due-within 2d]            reminders plus due ws tasks
