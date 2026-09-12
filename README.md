@@ -18,6 +18,9 @@ inbox
 
 ## Install
 
+The full walk from an empty machine, connectors and sign-in included, is
+[GETTING-STARTED.md](GETTING-STARTED.md). In short:
+
 ```bash
 uv tool install -e .
 inbox init                    # writes ~/.inbox/config.toml and policy.toml from the examples
