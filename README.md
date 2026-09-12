@@ -11,7 +11,7 @@ need.
 inbox
 ├── channels    your names for one account of one connector      ~/.inbox/config.toml
 ├── policy      what may be sent, from which channel, to whom    ~/.inbox/policy.toml
-├── connectors  gmail, whatsapp, ... any command on PATH that speaks CONNECTORS.md
+├── connectors  gmail, whatsapp, telegram, ... any command on PATH that speaks CONNECTORS.md
 ├── reminders   time + text + refs, sent from a second number     ~/.inbox/reminders/
 └── log         every send, draft, download and refusal           ~/.inbox/log/actions.jsonl
 ```
@@ -88,8 +88,9 @@ call.
 A reminder is time, text, channel and refs. Refs are kind-prefixed text
 (`ws:task:x`, `email:qmt:<id>`, `url:...`, `file:...`), printed into the
 message and followed only where the matching tool exists. Reminders go out
-from `[reminders].via` to `[reminders].to`'s address, a second number to
-your own, so the phone notifies. When `ws` is installed its due tasks feed
+from `[reminders].via` to `[reminders].to`, resolved on that channel's service,
+so they arrive from a second identity (a Telegram bot is the easy one) and
+the phone notifies. When `ws` is installed its due tasks feed
 the same loop, read only.
 
 Private. `~/.inbox` never goes into a public repository.

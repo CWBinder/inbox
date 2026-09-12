@@ -53,6 +53,18 @@ with `GMAIL_CREDENTIALS_PATH` and `GMAIL_TOKEN_PATH` pointing at it, and a
 line in the checkout's `config.toml` naming it. The client's `config.example.toml`
 shows the shape.
 
+**Telegram**, the cheapest channel for reminders to yourself, since a bot
+needs no phone number:
+
+```bash
+git clone https://github.com/<you>/telegram ~/Projects/telegram
+uv tool install -e ~/Projects/telegram
+# in Telegram: message @BotFather, /newbot, copy the token into config.toml (see config.example.toml)
+# then open your bot and press Start; bots cannot write first
+telegram contacts            # shows your chat id; put it in config.toml as `me = <id>`
+telegram accounts            # ok: claude   @yourbot
+```
+
 Either way, the test is the same: `<client> accounts` lists at least one
 account and says ok.
 
@@ -64,6 +76,7 @@ is the command's name; the account name is what `<client> accounts` printed.
 ```bash
 inbox channel add me   --connector whatsapp --account default --default --address 4412345678
 inbox channel add work --connector gmail    --account default --default
+inbox channel add claude --connector telegram --account claude      # reminders go out from here
 inbox status
 ```
 
