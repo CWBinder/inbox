@@ -243,9 +243,14 @@ def install_timer(every_minutes: int) -> str:
     pa_bin = shutil.which("inbox")
     if not pa_bin:
         raise SystemExit("inbox is not on PATH")
+    # launchd jobs get no shell profile: bake in the login shell's PATH so every connector and ws resolve
+    try:
+        login_path = subprocess.run(["zsh", "-lc", "printf %s \"$PATH\""], capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        login_path = ""
+    path = login_path or os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     plist.write_text(PLIST.format(label=LAUNCHD_LABEL, pa=pa_bin, seconds=every_minutes * 60,
-                                  path=os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-                                  log=paths.LOG / "remind-run.log"))
+                                  path=path, log=paths.LOG / "remind-run.log"))
     subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
     subprocess.run(["launchctl", "load", str(plist)], check=True)
     return f"installed {plist}: `inbox remind run` every {every_minutes} min, log in {paths.LOG / 'remind-run.log'}"
