@@ -264,13 +264,14 @@ def _warn_dropped_flag(body: str) -> None:
 
 def cmd_send(a):
     known, extras = _split_extras(a.rest)
+    if known["body"]:
+        _warn_dropped_flag(known["body"])
     ch, addr = _resolve_recipient(a.who, known["via"])
     verdict = policy.send(ch, addr, known["confirmed"])
     if not verdict.allowed:
         log.record("send", channel=ch.name, recipient=addr, ok=False, detail=verdict.reason)
         print(f"refused: {verdict.reason}", file=sys.stderr); sys.exit(3)
     body = known["body"] if known["body"] is not None else sys.stdin.read()
-    _warn_dropped_flag(body)
     args = [addr, "--body", body]
     if known["reply_to"]:
         args += ["--reply-to", known["reply_to"]]
