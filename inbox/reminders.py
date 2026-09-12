@@ -147,9 +147,13 @@ def send(r: Reminder, dry_run: bool = False) -> tuple[bool, str]:
     """A reminder goes out from the [reminders].via channel to the [reminders].to
     channel's address, so it arrives from a second number and the phone notifies."""
     via, to = config.reminders_via(), config.reminders_to()
-    recipient = to.address
-    if not recipient:
-        return False, f"channel '{to.name}' has no address in config"
+    if to.connector == via.connector and to.address:
+        recipient = to.address
+    else:
+        res = connectors.resolve(via, to.name)                 # e.g. "me" as the telegram bot knows it
+        if not res:
+            return False, f"'{to.name}' is not a known contact on channel '{via.name}' ({via.connector})"
+        recipient = res["address"]
     verdict = policy.send(via, recipient, confirmed=False)
     if not verdict.allowed:
         return False, verdict.reason

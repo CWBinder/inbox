@@ -62,12 +62,16 @@ def send(channel: config.Channel, recipient: str, confirmed: bool) -> Verdict:
     level = _level(rules.get("send"), defaults.get("send"), default="confirm")
     allow_to = rules.get("allow_to")
     if allow_to is not None:
+        from . import connectors                                 # late import: connectors imports config, not policy
         targets = set()
         for t in allow_to:
             targets.add(str(t))
             ch = config.channels().get(str(t))
-            if ch and ch.address:
+            if ch and ch.address and ch.connector == channel.connector:
                 targets.add(ch.address)
+            res = connectors.resolve(channel, str(t))            # what this name means on the sending service
+            if res:
+                targets.add(res["address"])
         if recipient not in targets:
             return Verdict(False, f"policy: channel '{channel.name}' may only message {sorted(allow_to)}")
     return _decide(level, confirmed, f"send via '{channel.name}'")

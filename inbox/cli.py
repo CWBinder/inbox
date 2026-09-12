@@ -125,10 +125,16 @@ def _resolve_recipient(who: str, via: str | None) -> tuple[config.Channel, str]:
     channel; a name is asked of each connector in turn."""
     chs = config.channels()
     if who in chs and chs[who].address:
-        target_addr = chs[who].address
+        target = chs[who]
         if via:
-            return config.channel(via), target_addr
-        return config.default_channel(chs[who].connector), target_addr
+            ch = config.channel(via)
+            if ch.connector == target.connector:           # same service: the channel's own address
+                return ch, target.address
+            res = connectors.resolve(ch, who)               # another service: ask its connector what "me" is
+            if not res:
+                raise SystemExit(f"'{who}' is a {target.connector} channel; on {via} ({ch.connector}) it is not a known contact")
+            return ch, res["address"]
+        return config.default_channel(target.connector), target.address
     if via:
         ch = config.channel(via)
         res = connectors.resolve(ch, who)
