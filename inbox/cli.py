@@ -392,7 +392,8 @@ def cmd_remind(a):
         for r in sorted(rows, key=lambda r: r.due):
             print(_fmt_reminder(r))
     elif a.remind_command == "run":
-        report = reminders.run(dry_run=a.dry_run)
+        use_agent = True if a.compose else (False if a.template else None)
+        report = reminders.run(dry_run=a.dry_run, use_agent=use_agent)
         print("\n".join(report) if report else "nothing due")
     elif a.remind_command == "done":
         print(reminders.mark_done(a.id))
@@ -497,6 +498,8 @@ examples:
     r = rs.add_parser("add"); r.add_argument("text", nargs="+"); r.add_argument("--due", required=True); r.add_argument("--ref", action="append")
     r = rs.add_parser("list"); r.add_argument("--due-within"); r.add_argument("--all", action="store_true"); r.add_argument("--json", action="store_true")
     r = rs.add_parser("run"); r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--compose", action="store_true", help="let an agent write each message (default from [reminders] compose)")
+    r.add_argument("--template", action="store_true", help="plain template, never the agent")
     r = rs.add_parser("done"); r.add_argument("id")
     r = rs.add_parser("snooze"); r.add_argument("id"); r.add_argument("--until", required=True)
     r = rs.add_parser("show"); r.add_argument("id")

@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
-from . import config, connectors, log, paths, policy, when
+from . import compose, config, connectors, log, paths, policy, when
 
 STATUSES = ("pending", "sent", "done", "snoozed")
 
@@ -143,7 +143,18 @@ def render(r: Reminder) -> str:
     return "\n".join(lines)
 
 
-def send(r: Reminder, dry_run: bool = False) -> tuple[bool, str]:
+def message_for(r: Reminder, use_agent: bool | None = None) -> tuple[str, str]:
+    """(text, how): the agent's message when composing is on and it answers, else the template."""
+    if use_agent is None:
+        use_agent = compose.enabled()
+    if use_agent:
+        text = compose.compose(r)
+        if text:
+            return text, "agent"
+    return render(r), "template"
+
+
+def send(r: Reminder, dry_run: bool = False, use_agent: bool | None = None) -> tuple[bool, str]:
     """A reminder goes out from the [reminders].via channel to the [reminders].to
     channel's address, so it arrives from a second number and the phone notifies."""
     via, to = config.reminders_via(), config.reminders_to()
@@ -157,23 +168,23 @@ def send(r: Reminder, dry_run: bool = False) -> tuple[bool, str]:
     verdict = policy.send(via, recipient, confirmed=False)
     if not verdict.allowed:
         return False, verdict.reason
-    body = render(r)
+    body, how = message_for(r, use_agent)
     if dry_run:
-        return True, f"DRY RUN via {via.name} -> {to.name} ({recipient}):\n{body}"
+        return True, f"DRY RUN via {via.name} -> {to.name} ({recipient}), {how}:\n{body}"
     ok, res, err, _ = connectors.run(via, "send", recipient, "--body", body, env=connectors.send_env(via.connector))
     out = json.dumps(res) if res else err
-    log.record("remind", channel=via.name, recipient=recipient, ok=ok, detail=r.text[:200], result=out[:200], reminder=r.id)
+    log.record("remind", channel=via.name, recipient=recipient, ok=ok, detail=r.text[:200], result=out[:200], reminder=r.id, composed=how)
     return ok, out
 
 
-def run(dry_run: bool = False) -> list[str]:
+def run(dry_run: bool = False, use_agent: bool | None = None) -> list[str]:
     """Fire everything due. Returns one report line per reminder considered."""
     now = _now()
     report = []
     for r in all_reminders():
         if r.status not in ("pending", "snoozed") or r.due_dt > now:
             continue
-        ok, msg = send(r, dry_run)
+        ok, msg = send(r, dry_run, use_agent)
         if ok and not dry_run:
             r.status, r.sent_at = "sent", now.isoformat(timespec="seconds")
             r.save()
@@ -183,7 +194,7 @@ def run(dry_run: bool = False) -> list[str]:
         ref = r.refs[0][3:]                       # bare ws REF, task:<key>
         if sent.get(ref) == r.due:
             continue
-        ok, msg = send(r, dry_run)
+        ok, msg = send(r, dry_run, use_agent)
         if ok and not dry_run:
             _mark_ws_sent(ref, r.due)
         report.append(f"{'sent' if ok else 'FAILED'} {r.id}  {r.text}" + ("" if ok else f"  ({msg})") + (f"\n{msg}" if dry_run else ""))

@@ -37,3 +37,4 @@ address = "4412345678"         # your own number; "me" as a recipient resolves t
 [reminders]
 via = "claude"                 # reminders go out from this channel ...
 to = "me"                      # ... to this channel's address
+# compose = true               # let an agent write each message (needs `claude` on PATH)

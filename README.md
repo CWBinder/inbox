@@ -93,4 +93,12 @@ so they arrive from a second identity (a Telegram bot is the easy one) and
 the phone notifies. When `ws` is installed its due tasks feed
 the same loop, read only.
 
+With `[reminders] compose = true` an agent writes each message instead of
+the template: `claude -p` runs headless with tools disabled, given the
+reminder and its dereferenced refs (the ws task record, the mail's header),
+and its stdout becomes the message. The loop keeps policy, send and log; the
+agent can only write. Any failure falls back to the template. Tone lives in
+`~/.inbox/compose.md` if you want to change it. `inbox remind run --compose`
+and `--template` override per run.
+
 Private. `~/.inbox` never goes into a public repository.
