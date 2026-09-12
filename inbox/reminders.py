@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
-from . import channels, config, log, paths, policy, when
+from . import config, connectors, log, paths, policy, when
 
 STATUSES = ("pending", "sent", "done", "snoozed")
 
@@ -74,7 +74,7 @@ def get(rid: str) -> Reminder:
     for r in all_reminders():
         if r.id == rid:
             return r
-    raise SystemExit(f"no reminder '{rid}' (pa remind list --all shows ids)")
+    raise SystemExit(f"no reminder '{rid}' (inbox remind list --all shows ids)")
 
 
 def add(text: str, due: datetime, refs: list[str], channel: str = "whatsapp") -> Reminder:
@@ -143,26 +143,23 @@ def render(r: Reminder) -> str:
     return "\n".join(lines)
 
 
-def _reminder_identity() -> str:
-    return config.load().get("reminders", {}).get("identity", "claude")
-
-
 def send(r: Reminder, dry_run: bool = False) -> tuple[bool, str]:
-    identity = _reminder_identity()
-    recipient = str(config.me().get("whatsapp", ""))
+    """A reminder goes out from the [reminders].via channel to the [reminders].to
+    channel's address, so it arrives from a second number and the phone notifies."""
+    via, to = config.reminders_via(), config.reminders_to()
+    recipient = to.address
     if not recipient:
-        return False, "no [me].whatsapp in config"
-    verdict = policy.whatsapp_send(identity, recipient, confirmed=False)
+        return False, f"channel '{to.name}' has no address in config"
+    verdict = policy.send(via, recipient, confirmed=False)
     if not verdict.allowed:
         return False, verdict.reason
     body = render(r)
     if dry_run:
-        return True, f"DRY RUN as {identity} -> {recipient}:\n{body}"
-    _, res = channels.whatsapp(identity, "send", recipient, "--body", body, capture=True, allow_send=True)
-    out = (res.stdout + res.stderr).strip()
-    log.record("remind", channel="whatsapp", identity=identity, recipient=recipient, ok=res.returncode == 0,
-               detail=r.text[:200], result=out[:200], reminder=r.id)
-    return res.returncode == 0, out
+        return True, f"DRY RUN via {via.name} -> {to.name} ({recipient}):\n{body}"
+    ok, res, err, _ = connectors.run(via, "send", recipient, "--body", body, env=connectors.send_env(via.connector))
+    out = json.dumps(res) if res else err
+    log.record("remind", channel=via.name, recipient=recipient, ok=ok, detail=r.text[:200], result=out[:200], reminder=r.id)
+    return ok, out
 
 
 def run(dry_run: bool = False) -> list[str]:
@@ -214,7 +211,7 @@ def snooze(rid: str, until: datetime) -> str:
 
 # ---- launchd timer -----------------------------------------------------------
 
-LAUNCHD_LABEL = "pa.remind"
+LAUNCHD_LABEL = "inbox.remind"
 PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -239,15 +236,15 @@ def install_timer(every_minutes: int) -> str:
     plist = _plist_path()
     plist.parent.mkdir(parents=True, exist_ok=True)
     paths.LOG.mkdir(parents=True, exist_ok=True)
-    pa_bin = shutil.which("pa")
+    pa_bin = shutil.which("inbox")
     if not pa_bin:
-        raise SystemExit("pa is not on PATH")
+        raise SystemExit("inbox is not on PATH")
     plist.write_text(PLIST.format(label=LAUNCHD_LABEL, pa=pa_bin, seconds=every_minutes * 60,
                                   path=os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
                                   log=paths.LOG / "remind-run.log"))
     subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
     subprocess.run(["launchctl", "load", str(plist)], check=True)
-    return f"installed {plist}: `pa remind run` every {every_minutes} min, log in {paths.LOG / 'remind-run.log'}"
+    return f"installed {plist}: `inbox remind run` every {every_minutes} min, log in {paths.LOG / 'remind-run.log'}"
 
 
 def uninstall_timer() -> str:

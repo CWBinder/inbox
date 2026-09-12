@@ -1,0 +1,20 @@
+# inbox policy. Lives in ~/.inbox/policy.toml.
+# Levels: deny | draft-only | confirm | allow.
+#   confirm: the caller must pass --confirmed, asserting the person approved
+#            this exact recipient and text. An earlier yes never covers a later message.
+# Missing keys fall back to [defaults], then to the most restrictive level.
+
+[defaults]
+send = "confirm"
+destructive = "deny"           # trash, draft-delete
+
+[channels.work]
+send = "draft-only"            # agents draft; the person sends
+
+[channels.personal]
+send = "draft-only"
+
+# The assistant's number may message you, and only you, without asking.
+# [channels.claude]
+# send = "allow"
+# allow_to = ["me"]

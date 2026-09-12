@@ -1,82 +1,92 @@
-# pa
+# inbox
 
-The assistant layer. `pa` talks to the world on one person's behalf: mail and
-WhatsApp through standalone clients, reminders that reach their phone, a
-policy on what may be sent, and a log of everything that was. It stores no
-knowledge; that is the job of a store such as [ws](../ws), which pa uses
-when present and does not need.
+Your channels, with rules. `inbox` drives the mail and chat clients you
+already have (connectors), gives you one merged view across them, applies a
+policy on what may be sent from where, fires reminders that reach your
+phone, and logs everything it did. It stores no knowledge; that is the job
+of a store such as [ws](../ws), which inbox uses when present and does not
+need.
 
 ```
-pa
-├── knows   accounts, identities, who "me" is         ~/.pa/config.toml
-├── decides what may be sent, by whom, to whom        ~/.pa/policy.toml
-├── drives  whatsapp (any profile), gmail             clients on PATH
-├── keeps   reminders with refs, and a launchd timer  ~/.pa/reminders/
-└── logs    every send, save, download and refusal    ~/.pa/log/actions.jsonl
+inbox
+├── channels    your names for one account of one connector      ~/.inbox/config.toml
+├── policy      what may be sent, from which channel, to whom    ~/.inbox/policy.toml
+├── connectors  gmail, whatsapp, ... any command on PATH that speaks CONNECTORS.md
+├── reminders   time + text + refs, sent from a second number     ~/.inbox/reminders/
+└── log         every send, draft, download and refusal           ~/.inbox/log/actions.jsonl
 ```
 
 ## Install
 
 ```bash
-uv tool install -e .          # gives you `pa`
-pa init                       # writes ~/.pa/config.toml and policy.toml from the examples
+uv tool install -e .
+inbox init                    # writes ~/.inbox/config.toml and policy.toml from the examples
 ```
 
-Edit both files. The clients pa drives must be on PATH: the
-[whatsapp](../whatsapp) client for WhatsApp, the [gmail](../gmail-mcp) client
-for mail. `pa status` tells you what is missing.
+Install the connectors you want on PATH: the [gmail](../gmail) client, the
+[whatsapp](../whatsapp) client. Then declare your channels, one per account:
+
+```bash
+inbox channel add work --connector gmail --account work --default
+inbox channel add me   --connector whatsapp --account default --default --address 4412345678
+inbox status                  # every channel checked through its connector
+```
+
+## Vocabulary
+
+- **connector**: a client command that talks to one service and speaks the
+  contract in [CONNECTORS.md](CONNECTORS.md). Conformance is membership;
+  nothing is registered. `inbox connectors --check NAME` tests one.
+- **account**: the connector's own name for one set of credentials
+  (`gmail accounts`, `whatsapp accounts`).
+- **channel**: your name for one account of one connector. The only thing
+  you type to say where: `--via qmt`, `--via claude`.
 
 ## Commands
 
 ```
-pa status                                    every identity, account, bridge and timer in one check
+inbox recent [--since 24h] [--incoming] [--via a,b]   what came in, all channels merged by time
+inbox search QUERY [--via a,b] [--since] [-n]         the service's own query syntax
+inbox read WHO [-n 30]                                one person across channels
+inbox read ID --via CHANNEL [--thread]                one message
+inbox resolve WHO                                     which channel and address a recipient maps to
 
-pa wa [--as IDENTITY] SUBCOMMAND ...         whatsapp with the identity's profile; `whatsapp -h` for subcommands
-pa wa send WHO --body TEXT [--confirmed]     policy-gated; logged
-pa email [--account NAME] SUBCOMMAND ...     gmail with the account; add --confirmed for send
+inbox send WHO [--via CH] --body TEXT [--reply-to ID] [--attach FILE] [--confirmed] [connector flags]
+inbox draft WHO [--via CH] --body TEXT ...            on channels that have drafts
 
-pa remind add TEXT --due WHEN [--ref K:V]... 'fri 9am', 'tomorrow 18:30', 'in 2h', '2026-09-12 16:00'
-pa remind list [--due-within 2d] [--all]     your reminders plus due ws tasks
-pa remind run [--dry-run]                    fire what is due; what the timer calls
-pa remind done|snooze ID [--until WHEN]      ws tasks: done via ws edit, snooze via ws edit --due
-pa remind install [--every 10]               launchd timer on this Mac
-pa remind show ID
+inbox email [--via CH] SUB ...                        a connector's own commands, account chosen for you
+inbox wa    [--via CH] SUB ...                        (aliases from config; the connector's name works too)
 
-pa policy                                    the rules
-pa log [--since 7d] [--json]                 the trail
+inbox remind add TEXT --due WHEN [--ref K:V]...       'fri 9am', 'tomorrow 18:30', 'in 2h'
+inbox remind list [--due-within 2d] | run [--dry-run] | done ID | snooze ID --until WHEN
+inbox remind install [--every 10]                     launchd timer on this Mac
+
+inbox status | connectors | channel list | policy | log [--since 7d]
 ```
+
+Recipients are a channel name (`me`), a raw address (`x@y.org`, `4366...`),
+or a contact name, which is asked of each connector's `resolve`. An email
+address goes by mail, a number by chat, on that connector's default channel
+unless `--via` says otherwise. Flags inbox does not know are passed to the
+connector untouched, so `--subject` and `--cc` reach gmail.
 
 ## Policy
 
-Levels `deny`, `draft-only`, `confirm`, `allow`; missing keys are the most
-restrictive. `confirm` means the caller passes `--confirmed`, asserting the
-person approved this exact recipient and text. An earlier yes never covers a
-later message. Per identity, `allow_to = ["me"]` restricts recipients.
-
-pa's policy is the gate. When it says yes, pa sets the whatsapp client's own
-send switch for that one call, so the client's config can stay off.
+Levels `deny`, `draft-only`, `confirm`, `allow`, per channel, with
+`[defaults]` underneath and the most restrictive level as the floor.
+`confirm` means the caller passes `--confirmed`, asserting the person
+approved this exact recipient and text; an earlier yes never covers a later
+message. `allow_to = ["me"]` restricts a channel to named recipients. When
+policy says yes, inbox lifts the connector's own send guard for that one
+call.
 
 ## Reminders
 
-A reminder is time, text, channel and refs. It is not a task. Refs are text
-with a kind prefix (`ws:task:x`, `email:work:<id>`, `whatsapp:Alice:<id>`,
-`url:...`, `file:...`); pa prints them into the message and follows a kind
-only when the matching tool is installed. Reminders go out from the identity
-named in `[reminders] identity` (default `claude`) to `[me].whatsapp`, so
-they arrive as an incoming message from a second number and the phone
-notifies. A message from your own number would not.
+A reminder is time, text, channel and refs. Refs are kind-prefixed text
+(`ws:task:x`, `email:qmt:<id>`, `url:...`, `file:...`), printed into the
+message and followed only where the matching tool exists. Reminders go out
+from `[reminders].via` to `[reminders].to`'s address, a second number to
+your own, so the phone notifies. When `ws` is installed its due tasks feed
+the same loop, read only.
 
-When `ws` is installed, its open tasks with a due date feed the same loop,
-read only, each sent once per due date.
-
-## Layout of ~/.pa
-
-```
-config.toml   accounts, identities, me
-policy.toml   send and confirmation rules
-reminders/    one JSON file per reminder
-state/        ws-sent.json and other run markers
-log/          actions.jsonl, remind-run.log
-```
-
-Private. Never commit it to a public repository.
+Private. `~/.inbox` never goes into a public repository.

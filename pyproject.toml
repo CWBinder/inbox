@@ -1,17 +1,17 @@
 [project]
-name = "pa-cli"
+name = "inbox-cli"
 version = "0.1.0"
-description = "Personal assistant CLI: mail and WhatsApp through standalone clients, reminders, policy and an audit log."
+description = "Your channels, with rules: mail and chat through standalone clients, one merged view, policy on sending, reminders, and a log."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = []
 
 [project.scripts]
-pa = "pa.cli:main"
+inbox = "inbox.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["pa"]
+packages = ["inbox"]

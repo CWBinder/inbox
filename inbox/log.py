@@ -6,14 +6,13 @@ from datetime import datetime, timedelta, timezone
 from . import paths
 
 
-def record(action: str, *, channel: str, ok: bool, identity: str | None = None,
-           recipient: str | None = None, detail: str = "", **extra) -> None:
+def record(action: str, *, channel: str, ok: bool, recipient: str | None = None,
+           detail: str = "", **extra) -> None:
     paths.LOG.mkdir(parents=True, exist_ok=True)
     entry = {
         "ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-        "action": action, "channel": channel, "identity": identity,
-        "recipient": recipient, "ok": ok, "detail": detail[:500],
-        "by": os.environ.get("PA_ACTOR") or os.environ.get("USER"),
+        "action": action, "channel": channel, "recipient": recipient, "ok": ok,
+        "detail": detail[:500], "by": os.environ.get("INBOX_ACTOR") or os.environ.get("USER"),
         **extra,
     }
     with paths.LOG_FILE.open("a", encoding="utf-8") as fh:

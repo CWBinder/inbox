@@ -1,8 +1,8 @@
-"""Where pa keeps the person's things: one folder in home, never per project."""
+"""Where inbox keeps the person's things: one folder in home, never per project."""
 import os
 from pathlib import Path
 
-HOME = Path(os.environ.get("PA_HOME") or Path.home() / ".pa")
+HOME = Path(os.environ.get("INBOX_HOME") or Path.home() / ".inbox")
 CONFIG = HOME / "config.toml"
 POLICY = HOME / "policy.toml"
 REMINDERS = HOME / "reminders"
