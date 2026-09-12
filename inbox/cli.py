@@ -253,6 +253,15 @@ def _split_extras(argv: list[str]) -> tuple[dict, list[str]]:
     return vars(known), extras
 
 
+def _warn_dropped_flag(body: str) -> None:
+    """`--body hi via qmt`: a flag typed without its dashes ends up in the text."""
+    words = body.split()
+    for i, w in enumerate(words[:-1]):
+        if w in ("via", "reply-to", "attach", "confirmed") and (w != "via" or words[i + 1] in config.channels()):
+            print(f"note: the body contains '{w} {words[i + 1]}'; did you mean --{w}?", file=sys.stderr)
+            return
+
+
 def cmd_send(a):
     known, extras = _split_extras(a.rest)
     ch, addr = _resolve_recipient(a.who, known["via"])
@@ -261,6 +270,7 @@ def cmd_send(a):
         log.record("send", channel=ch.name, recipient=addr, ok=False, detail=verdict.reason)
         print(f"refused: {verdict.reason}", file=sys.stderr); sys.exit(3)
     body = known["body"] if known["body"] is not None else sys.stdin.read()
+    _warn_dropped_flag(body)
     args = [addr, "--body", body]
     if known["reply_to"]:
         args += ["--reply-to", known["reply_to"]]
