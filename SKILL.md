@@ -1,3 +1,8 @@
+---
+name: inbox
+description: Read, search and send across a person's mail and chat channels with their sending policy applied; reminders and a log. Use for any message work instead of calling gmail or whatsapp directly.
+---
+
 # Driving inbox
 
 `inbox` is the person's channels with rules: it drives the mail and chat
