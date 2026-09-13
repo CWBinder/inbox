@@ -364,54 +364,67 @@ def cmd_passthrough(a):
 # ---- reminders ---------------------------------------------------------------
 
 def _fmt_reminder(r):
-    flag = {"pending": " ", "snoozed": "z", "sent": ">", "done": "x"}.get(r.status, "?")
-    refs = ("  " + " ".join(r.refs)) if r.refs else ""
-    return f"[{flag}] {r.id:<14} {when.fmt(r.due_dt):<17} {r.text}{refs}"
+    flag = {"pending": " ", "snoozed": "z", "told": ">", "done": "x"}.get(r.status, "?")
+    extra = []
+    if r.role: extra.append(r.role)
+    if r.session: extra.append("session")
+    if r.watches: extra.append(f"{len(r.watches)} watch")
+    tag = ("  [" + ", ".join(extra) + "]") if extra else ""
+    return f"[{flag}] {r.id:<28} {when.fmt(r.due_dt):<17} {r.title}{tag}"
 
 
 def cmd_remind(a):
-    if a.remind_command == "add":
+    c = a.remind_command
+    if c in ("add", "new"):
         try:
             due = when.parse(a.due)
         except when.WhenError as e:
             raise SystemExit(str(e))
-        r = reminders.add(" ".join(a.text), due, a.ref or [])
+        body = reminders.TEMPLATE_BODY if c == "new" else ""
+        r = reminders.add(" ".join(a.text), due, a.ref or [], role=a.role, watch=a.watch or [], body=body,
+                          session=a.session, rid=a.id)
         print(_fmt_reminder(r))
-    elif a.remind_command == "list":
-        horizon = None
-        if a.due_within:
-            horizon = when.parse("in " + a.due_within) if a.due_within[0].isdigit() else when.parse(a.due_within)
-        rows = [r for r in reminders.all_reminders() if a.all or r.status in ("pending", "snoozed", "sent")]
-        rows += reminders.ws_due_tasks(within=(horizon - when._now()) if horizon else None)
-        if horizon:
-            rows = [r for r in rows if r.due_dt <= horizon]
+        print(r.path)
+        if c == "new":
+            editor = shutil.which(__import__("os").environ.get("EDITOR", "")) or None
+            if editor and not a.no_edit:
+                subprocess.run([editor, str(r.path)])
+    elif c == "list":
+        rows = [r for r in reminders.all_reminders() if a.all or r.status != "done"]
         if a.json:
-            print(json.dumps([r.__dict__ for r in rows], ensure_ascii=False, indent=2, default=str)); return
+            print(json.dumps([{k: v for k, v in r.__dict__.items() if k != "log_lines"} for r in rows], ensure_ascii=False, indent=2)); return
         if not rows:
-            print("nothing due" if horizon else "no reminders"); return
-        for r in sorted(rows, key=lambda r: r.due):
+            print("no reminders"); return
+        for r in rows:
             print(_fmt_reminder(r))
-    elif a.remind_command == "run":
-        use_agent = True if a.compose else (False if a.template else None)
-        report = reminders.run(dry_run=a.dry_run, use_agent=use_agent)
-        print("\n".join(report) if report else "nothing due")
-    elif a.remind_command == "done":
+    elif c == "run":
+        report = reminders.run(dry_run=a.dry_run)
+        print("\n".join(report) if report else "nothing to do")
+    elif c == "done":
         print(reminders.mark_done(a.id))
-    elif a.remind_command == "snooze":
+    elif c == "snooze":
         try:
             until = when.parse(a.until)
         except when.WhenError as e:
             raise SystemExit(str(e))
         print(reminders.snooze(a.id, until))
-    elif a.remind_command == "install":
-        print(reminders.install_timer(a.every))
-    elif a.remind_command == "uninstall":
-        print(reminders.uninstall_timer())
-    elif a.remind_command == "show":
+    elif c == "show":
         r = reminders.get(a.id)
-        print(json.dumps(r.__dict__, ensure_ascii=False, indent=2))
-        print("--- as it would be sent ---")
-        print(reminders.render(r))
+        print(r.render_file(), end="")
+        if r.watches:
+            print("\n--- watches (explicit + implied by refs) ---")
+            for w in r.watches: print("  " + w)
+    elif c == "check":
+        r = reminders.get(a.id)
+        hits = reminders.check_watches(r)
+        print("\n".join(hits) if hits else "nothing new since " + (r.checked_at or r.told_at or r.created or "?"))
+    elif c == "say":
+        r = reminders.get(a.id)
+        print(reminders.converse(r, " ".join(a.text), dry_run=a.dry_run))
+    elif c == "install":
+        print(reminders.install_timer(a.every))
+    elif c == "uninstall":
+        print(reminders.uninstall_timer())
 
 
 # ---- policy / log ------------------------------------------------------------
@@ -493,16 +506,24 @@ examples:
     except config.ConfigError:
         pass
 
-    s = sub.add_parser("remind", help="reminders: add, list, run, done, snooze, install")
+    s = sub.add_parser("remind", help="reminders: add, new, list, show, run, say, done, snooze, install")
     rs = s.add_subparsers(dest="remind_command", required=True)
-    r = rs.add_parser("add"); r.add_argument("text", nargs="+"); r.add_argument("--due", required=True); r.add_argument("--ref", action="append")
-    r = rs.add_parser("list"); r.add_argument("--due-within"); r.add_argument("--all", action="store_true"); r.add_argument("--json", action="store_true")
-    r = rs.add_parser("run"); r.add_argument("--dry-run", action="store_true")
-    r.add_argument("--compose", action="store_true", help="let an agent write each message (default from [reminders] compose)")
-    r.add_argument("--template", action="store_true", help="plain template, never the agent")
+    for verb, help_ in (("add", "a plain reminder: title, due, refs"), ("new", "a full reminder with a brief template, opened in $EDITOR")):
+        r = rs.add_parser(verb, help=help_); r.add_argument("text", nargs="+", help="the title")
+        r.add_argument("--due", required=True, help="'2026-09-12 16:00', 'fri 9am', 'tomorrow 18:30', 'in 2h'")
+        r.add_argument("--ref", action="append", metavar="KIND:VALUE", help="ws:task:x, email:qmt:<id>, whatsapp:BJ:<id>, url:..., file:...")
+        r.add_argument("--watch", action="append", metavar="KIND:VALUE", help="email:from:<addr>, email:thread:<channel>:<id>, whatsapp:chat:<who>, ws:<ref>")
+        r.add_argument("--role", help="roster role that handles it (default: a plain watcher)")
+        r.add_argument("--session", help="claude session id to resume for it")
+        r.add_argument("--id", help="file name; default: a slug of the title")
+        r.add_argument("--no-edit", action="store_true")
+    r = rs.add_parser("list", help="open reminders"); r.add_argument("--all", action="store_true"); r.add_argument("--json", action="store_true")
+    r = rs.add_parser("show", help="the reminder file, plus its watches"); r.add_argument("id")
+    r = rs.add_parser("check", help="run one reminder's watches now"); r.add_argument("id")
+    r = rs.add_parser("run", help="one pass: replies, due, watches; what the timer calls"); r.add_argument("--dry-run", action="store_true")
+    r = rs.add_parser("say", help="one conversation turn with the reminder's role, from the terminal"); r.add_argument("id"); r.add_argument("text", nargs="+"); r.add_argument("--dry-run", action="store_true")
     r = rs.add_parser("done"); r.add_argument("id")
     r = rs.add_parser("snooze"); r.add_argument("id"); r.add_argument("--until", required=True)
-    r = rs.add_parser("show"); r.add_argument("id")
     r = rs.add_parser("install"); r.add_argument("--every", type=int, default=10)
     rs.add_parser("uninstall")
     s.set_defaults(func=cmd_remind)
