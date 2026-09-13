@@ -440,7 +440,10 @@ def converse(r: Reminder, prompt: str, dry_run: bool = False) -> str:
         return f"{r.id}: claude is not on PATH"
     hits = check_watches(r)
     full = prompt + ("\n\nNew since last check:\n" + "\n".join(f"- {h}" for h in hits) if hits else "")
-    argv = ["claude", "-p", full, "--output-format", "json", "--permission-mode", "acceptEdits"]
+    # headless: nobody can approve a prompt, so the role's tools are allowed up front.
+    # The CLIs enforce their own policy (inbox refuses sends without --confirmed, ws only edits the store).
+    allowed = "Read Glob Grep Bash(inbox:*) Bash(ws:*) Bash(pplx:*) Bash(gmail:*) Bash(whatsapp:*) Bash(telegram:*) Bash(roster:*)"
+    argv = ["claude", "-p", full, "--output-format", "json", "--allowedTools", allowed]
     resumed = bool(r.session and r.mode != "fresh")
     if resumed:
         argv += ["--resume", r.session]
