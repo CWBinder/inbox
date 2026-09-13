@@ -151,9 +151,13 @@ def _stamp(dt: datetime | None = None) -> str:
     return (dt or _now()).strftime("%Y-%m-%d %H:%M")
 
 
+_STOP = {"the", "a", "an", "to", "of", "for", "and", "my", "in", "on", "at", "with", "about"}
+
+
 def _slug(text: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return s[:40] or "reminder"
+    """Short id from the first three meaningful words: 'Pay the KITP conference fee' -> 'pay-kitp-conference'."""
+    words = [w for w in re.sub(r"[^a-z0-9 ]+", " ", text.lower()).split() if w not in _STOP]
+    return "-".join(words[:3]) or "reminder"
 
 
 # ---- store ---------------------------------------------------------------------
@@ -302,10 +306,10 @@ def announcement(r: Reminder, hits: list[str], why: str) -> str:
     if r.body.strip():
         first = next((l for l in r.body.splitlines() if l.strip()), "")
         lines.append(first[:200])
-    tail = "Reply with what I should do"
+    tail = f"Reply with what I should do (start with '{r.id}' if you are talking to several)"
     if r.session:
-        tail += " (continues the earlier session; say 'fresh' first to start over)"
-    tail += f", or 'done {r.id}', 'snooze {r.id} 2h'."
+        tail += "; 'fresh' starts over"
+    tail += f". 'done {r.id}' closes it, 'snooze {r.id} 2h' pushes it."
     lines.append(tail)
     return "\n".join(lines)
 
@@ -313,6 +317,16 @@ def announcement(r: Reminder, hits: list[str], why: str) -> str:
 # ---- the person's replies ------------------------------------------------------
 
 _LAST_REPLY = paths.STATE / "last-reply.json"
+_CURRENT = paths.STATE / "current.json"
+
+
+def _current() -> dict:
+    return json.loads(_CURRENT.read_text()) if _CURRENT.is_file() else {}
+
+
+def _set_current(rid: str | None, choices: list[str] | None = None) -> None:
+    paths.STATE.mkdir(parents=True, exist_ok=True)
+    _CURRENT.write_text(json.dumps({"id": rid, "choices": choices or []}) + "\n")
 
 
 def _last_reply_seen() -> str | None:
@@ -348,28 +362,56 @@ def new_replies() -> list[dict]:
 _CMD = re.compile(r"^\s*(done|snooze|fresh|resume)\b\s*(\S+)?\s*(.*)$", re.I)
 
 
-def _target_of(text: str) -> tuple[Reminder | None, str]:
-    """Which reminder a reply is about: a named id anywhere in the text, else the
-    one most recently told. Returns (reminder, text without the id)."""
+def _target_of(text: str) -> tuple[Reminder | None, str, list[Reminder]]:
+    """Which reminder a reply is about. In order: an id named in the text; a
+    number answering a pending choice; the reminder the person is currently
+    talking to; the only reminder told since they last wrote. Otherwise none,
+    and the candidates are returned so the loop can ask."""
     ids = {r.id: r for r in open_reminders()}
     for rid in sorted(ids, key=len, reverse=True):
         if re.search(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", text):
-            return ids[rid], re.sub(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", "", text).strip()
-    told = [r for r in ids.values() if r.told_at]
-    if told:
-        return max(told, key=lambda r: r.told_at), text.strip()
-    return None, text.strip()
+            return ids[rid], re.sub(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", "", text).strip(), []
+    cur = _current()
+    m = re.match(r"^\s*(\d+)\s*(.*)$", text, re.S)
+    if m and cur.get("choices"):
+        n = int(m.group(1))
+        if 1 <= n <= len(cur["choices"]) and cur["choices"][n - 1] in ids:
+            return ids[cur["choices"][n - 1]], m.group(2).strip(), []
+    if cur.get("id") in ids:
+        return ids[cur["id"]], text.strip(), []
+    told = sorted((r for r in ids.values() if r.told_at), key=lambda r: r.told_at, reverse=True)
+    if len(told) == 1:
+        return told[0], text.strip(), []
+    return None, text.strip(), told[:5]
 
 
 def handle_reply(m: dict, dry_run: bool = False) -> str:
     text = (m.get("text") or "").strip()
-    r, rest = _target_of(text)
+    sw = re.match(r"^\s*switch\s+(\S+)\s*$", text, re.I)
+    if sw:
+        rid = sw.group(1)
+        if rid in {x.id for x in open_reminders()}:
+            _set_current(rid); tell(f"[{rid}] now talking about this one.", None, dry_run)
+            return f"switched to {rid}"
+        tell(f"no open reminder '{rid}'. Open: " + ", ".join(x.id for x in open_reminders()), None, dry_run)
+        return f"switch: unknown {rid}"
+    r, rest, candidates = _target_of(text)
     if r is None:
-        return f"reply '{text[:40]}': no open reminder to attach it to"
+        if candidates:
+            _set_current(None, [c.id for c in candidates])
+            listing = "\n".join(f"{i}  {c.id}: {c.title}" for i, c in enumerate(candidates, 1))
+            tell("Which one? Reply with the number, or start with the id.\n" + listing, None, dry_run)
+            return f"reply '{text[:40]}': asked which of {len(candidates)}"
+        tell("No open reminder to attach that to.", None, dry_run)
+        return f"reply '{text[:40]}': no open reminder"
+    _set_current(r.id)
+    if not rest:                                        # a bare number or id: chosen, waiting for the prompt
+        tell(f"[{r.id}] {r.title}. What should I do?", r, dry_run)
+        return f"{r.id}: selected"
     cmd = _CMD.match(rest) or _CMD.match(text)
     if cmd and cmd.group(1).lower() == "done":
         r.status = "done"; r.note("done, by reply"); r.save()
-        _ws_close(r)
+        _ws_close(r); _set_current(None)
         tell(f"[{r.id}] closed.", r, dry_run)
         return f"{r.id}: done"
     if cmd and cmd.group(1).lower() == "snooze":
