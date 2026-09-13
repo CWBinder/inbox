@@ -85,6 +85,9 @@ call.
 
 ## Reminders
 
+The full model, reminders, watched tasks, replies and the pass, is in
+[REMINDERS.md](REMINDERS.md). In short:
+
 A reminder is time, text, channel and refs. Refs are kind-prefixed text
 (`ws:task:x`, `email:qmt:<id>`, `url:...`, `file:...`), printed into the
 message and followed only where the matching tool exists. Reminders go out
