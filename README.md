@@ -85,23 +85,19 @@ call.
 
 ## Reminders
 
-The full model, reminders, watched tasks, replies and the pass, is in
-[REMINDERS.md](REMINDERS.md). In short:
+The full model is in [REMINDERS.md](REMINDERS.md). In short: a reminder is a
+Markdown file with a due time, refs, watches, a role and a brief. The pass
+runs on a timer, tells you on your reminder channel when a reminder is due or
+one of its watches fired, and reads your replies. `done` and `snooze` are
+bookkeeping; anything else is a prompt for the reminder's role, run headless,
+whose answer comes back to your phone. Every reply continues the same session.
 
-A reminder is time, text, channel and refs. Refs are kind-prefixed text
-(`ws:task:x`, `email:qmt:<id>`, `url:...`, `file:...`), printed into the
-message and followed only where the matching tool exists. Reminders go out
-from `[reminders].via` to `[reminders].to`, resolved on that channel's service,
-so they arrive from a second identity (a Telegram bot is the easy one) and
-the phone notifies. When `ws` is installed its due tasks feed
-the same loop, read only.
-
-With `[reminders] compose = true` an agent writes each message instead of
-the template: `claude -p` runs headless with tools disabled, given the
-reminder and its dereferenced refs (the ws task record, the mail's header),
-and its stdout becomes the message. The loop keeps policy, send and log; the
-agent can only write. Any failure falls back to the template. Tone lives in
-`~/.inbox/compose.md` if you want to change it. `inbox remind run --compose`
-and `--template` override per run.
+```
+inbox remind add TEXT --due WHEN [--ref K:V] [--watch K:V] [--role R]
+inbox remind new TEXT --due WHEN ...          the brief template, opened in $EDITOR
+inbox remind list | show ID | check ID
+inbox remind say ID TEXT                      one turn, from the terminal
+inbox remind run [--dry-run] | install [--every 10]
+```
 
 Private. `~/.inbox` never goes into a public repository.

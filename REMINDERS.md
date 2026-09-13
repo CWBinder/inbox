@@ -14,190 +14,111 @@ something has changed or something is due. Nothing stays running between
 passes. The loop owns every side effect: it sends, it logs, it applies
 policy. An agent only ever returns text.
 
-## 1. The reminder record
+## 1. The reminder file
 
-One JSON file per reminder in `~/.inbox/reminders/<id>.json`.
+One Markdown file per reminder in `~/.inbox/reminders/<id>.md`. The YAML
+header is what the loop reads; the body is the brief, written for whoever
+picks the reminder up later, human or agent.
 
-```json
-{
-  "id":      "r_f22deb",
-  "text":    "Pay the KITP conference fee",
-  "due":     "2026-09-11T09:00+02:00",
-  "status":  "pending",
-  "refs":    ["url:https://www.kitp.ucsb.edu/pay", "email:qmt:1a081b3b8909a785"],
-  "source":  "manual",
-  "created": "2026-09-11T00:42:24+02:00",
-  "sent_at": null,
-  "note":    ""
-}
-```
-
-| field | meaning |
-|---|---|
-| `id` | `r_` plus six hex characters; the handle in every reply |
-| `text` | what to be reminded of, one line |
-| `due` | ISO 8601 with offset; the moment it becomes due |
-| `status` | `pending` → `sent` → `done`; `snoozed` resets `due` and returns to pending |
-| `refs` | kind-prefixed strings, see §3 |
-| `source` | `manual`, or `ws` for a reminder derived from a store task |
-| `sent_at` | when it last went out |
-| `note` | free text, e.g. the person's last reply |
-
-Created with `inbox remind add TEXT --due WHEN [--ref K:V]...`. A reminder
-has no brief and no watch: it fires on `due`, once, and then waits for
-`done` or `snooze`.
-
-## 2. The watched task
-
-Lives in the store as a ws task; the loop never creates one. The task's
-`description` carries a brief, and two list fields carry the machinery.
-Written by whoever creates the task, usually an agent turning a message into
-work, so the sender and thread are at hand.
-
-```yaml
-name: Pay the KITP conference fee
-status: open
-due: 2026-09-11
-priority: high
-description: |
-  Goal:         registration for AI at the Quantum Frontier stays valid
-  State:        registered; fee unpaid; deadline Fri 11 Sep, then cancelled
-  Waiting for:  payment confirmation from kitp-conf@ucsb.edu
-  Next step:    pay at https://www.kitp.ucsb.edu/pay
-  Agent may:    check mail for the confirmation; draft a reply to KITP; never pay
-  Done when:    a confirmation mail exists
-role: logistics
+```markdown
+---
+id: pay-the-kitp-conference-fee
+due: 2026-09-11 09:00
+status: told                # pending | told | snoozed | done
+role: logistics             # a roster role; omitted means a plain watcher
+session: 0de91320-...       # the claude session the conversation continues in
+mode: resume                # resume | fresh: the person's choice, once
 refs:
   - email:qmt:1a081b3b8909a785
   - url:https://www.kitp.ucsb.edu/pay
 watch:
   - email:from:kitp-conf@ucsb.edu
-  - email:thread:1a081b3b8909a785
+created: 2026-09-11 00:42
+told_at: 2026-09-12 20:54
+checked_at: 2026-09-13 21:20
+---
+
+# Pay the KITP conference fee
+
+**Goal.** Keep the registration.
+**State.** Registered, unpaid; KITP cancels after Friday.
+**Waiting for.** A payment confirmation from kitp-conf@ucsb.edu.
+**Next step.** Pay at the link.
+**Agent may.** Check mail and report; draft a reply if asked. Never pay, never cancel.
+**Done when.** A confirmation mail exists, or Christian says done.
+
+## Log
+- 2026-09-11 00:42  created
+- 2026-09-12 20:54  told (due)
 ```
 
-The six brief lines are a convention, not a schema; an agent reads them as
-prose. `Agent may` is the only line with teeth: the acting session (§7) is
-told it and nothing beyond it. `role` names a roster role; missing means the
-generic watcher. `refs` are context (§3); `watch` are signals (§4). Every ref
-that names a message or thread is also a watch, so a task made from a mail
-is watched without spelling it out.
+A plain poke is the same file with only a title. `inbox remind add` writes
+that; `inbox remind new` writes the six-heading template and opens it in
+`$EDITOR`. Ids are slugs of the title, because they get typed in replies.
+The log at the bottom is appended by the loop.
 
-## 3. Refs
+## 2. Refs and watches
 
-Kind-prefixed text. The loop stores them, prints them into messages, and
-dereferences a kind only when the matching tool is installed; unknown kinds
-pass through.
+Refs are kind-prefixed pointers to what the reminder is about: `ws:task:x`,
+`email:<channel>:<id>`, `whatsapp:<who>:<id>`, `url:`, `file:`. Watches are
+what the loop checks for changes, without an agent:
 
-```text
-ws:task:<key>  ws:document:<key>  ws:person:<key>   the store, via `ws show`
-email:<channel>:<message-id>                        one mail, via the channel's connector
-whatsapp:<who>:<message-id>  telegram:<chat>:<msg>   one chat message
-url:<https://...>                                   printed as is
-file:<path>                                         read if present
-```
+| watch | the loop runs |
+|---|---|
+| `email:from:<addr>` | `gmail search from:<addr> --since <last check>` on every mail channel |
+| `email:thread:<channel>:<id>` | mail in that thread since the last check |
+| `whatsapp:chat:<who>` | `whatsapp search --chat <who> --since <last check>` |
+| `ws:<ref>` | `ws show`; a hit when `updated_at` is newer than the last check |
 
-## 4. Watches
+Every message ref implies a watch on its thread; a `ws:` ref implies a watch
+on that object. Explicit watches cover what refs cannot say, such as any mail
+from a sender. `inbox remind show ID` lists both; `inbox remind check ID`
+runs them now.
 
-A watch is a channel plus a query a connector already answers. The loop
-runs it with `--since <last check>` and counts hits. No agent is involved.
+## 3. The pass
 
-```text
-email:from:<address>          new mail from a sender          inbox search "from:X" --since T
-email:thread:<message-id>     a reply in a thread             inbox read ID --thread, newer than T
-email:query:<gmail query>     anything the service can search
-whatsapp:chat:<who>           new messages from a chat        inbox wa read WHO --since T
-telegram:chat:<who>           same, on Telegram
-ws:<kind>:<key>               the object appears or changes   `ws show` succeeds / updated_at > T
-file:<path>                   the file appears or changes     mtime > T
-date:<YYYY-MM-DD[THH:MM]>     the moment arrives
-```
+`inbox remind run`, every ten minutes from launchd. No agent unless the
+person asks for one.
 
-`date:` is implicit for every task with a due date.
+1. Read the person's replies on the reminder channel since the last pass.
+   Apply each (section 4).
+2. Any open ws task with a due date and no reminder of its own becomes one.
+3. For each open reminder: due and not yet told, or watches hit? Then tell
+   the person: the title, why, the new items, the first line of the brief,
+   and how to reply. Mark it told. Otherwise record the check time.
 
-## 5. The pass
+A told reminder is not repeated. It comes up again only on a new watch hit,
+after a snooze, or when the person replies.
 
-Every tick (launchd, default ten minutes; `inbox remind install --every N`):
+## 4. Replies
 
-```text
-1. replies      pull the bot chat; apply every reply since the last pass (§6)
-2. reminders    for each pending reminder past due: compose (§8), send, mark sent
-3. tasks        for each open ws task with a watch or a due date:
-                  a. run its watches since last_checked; note hits            (Python, cheap)
-                  b. if no hits and not newly due: write last_checked, next task
-                  c. else start ONE session of its role, read-only (§7)
-                  d. act on the answer: NOTHING / MESSAGE / PROPOSE
-4. exit
-```
+A reply names a reminder by its id anywhere in the text; without one it goes
+to the most recently told reminder.
 
-Per-task state in `~/.inbox/state/tasks/<key>.json`: `last_checked`,
-`last_hits`, `last_told` (what the person was last sent, and when),
-`proposal` (an open proposal awaiting a yes), `told_due` (so a due task is
-announced once, not every tick).
+| reply | effect |
+|---|---|
+| `done [id]` | closes it; a `ws:task:` ref is marked done |
+| `snooze [id] 2h` / `tomorrow 9am` | new due time, will be told again |
+| `fresh [id] [text]` | forget the session; start over (then `text` is the prompt) |
+| `resume [id] [text]` | continue the recorded session (the default when one exists) |
+| anything else | the prompt for one turn of the reminder's role |
 
-Quiet rules: a task is spoken about at most once per hit set and once when
-it becomes due; nothing at all between 23:00 and 07:00 unless due within the
-hour (`[reminders] quiet = ["23:00", "07:00"]`).
+## 5. A turn
 
-## 6. Replies
+The person's text is the prompt. The loop starts Claude headless: resumed
+with `--resume <session>` when the reminder has one and the mode is not
+fresh, else fresh with the role's installed subagent file as the system
+prompt (`roster path ROLE`) plus the reminder file verbatim and the rule that
+the answer goes to a phone. New watch hits since the last check are appended
+to the prompt. The role runs with its full tools; sending still needs the
+person's yes in the conversation, which the role gives as `--confirmed`.
 
-The bot chat is the reply channel. A reply is matched to a reminder or task
-by the message it answers (Telegram reply-to), else by an id in the text,
-else it goes to the most recent open item. Only messages from the person's
-own chat id count.
+The session's final answer is sent back verbatim, with "reply to continue,
+or done". Its session id is recorded in the reminder, so the next reply
+continues it. `inbox remind say ID TEXT` is the same turn from a terminal.
 
-```text
-done [id]            reminder → done; task → ws edit --status done
-snooze [id] 2h|tomorrow 9|fri        push the due moment
-yes | go | send      accept the open proposal on that item (§7)
-no | later           drop the proposal; the task stays watched
-anything else        stored in `note`; passed to the next session as context
-```
+## 6. Costs
 
-## 7. Sessions
-
-A session is one headless run of a roster role: `claude -p` with the role's
-composed file as system prompt, given the task, its brief, its refs
-dereferenced, the watch hits, and `last_told`. Two kinds:
-
-**Watching** (step 3c). Tools read-only: `ws show`, `ws search`, `inbox
-search`, `inbox read`. Must end with exactly one of:
-
-```text
-NOTHING                       nothing worth saying; the loop records the check
-MESSAGE <text>                the loop sends the text as is
-PROPOSE <text>
-ACTION <one line>             e.g.  inbox email send-draft r-4838... --via personal
-                              the loop sends the text and stores the action
-```
-
-**Acting** (after a `yes`). Same role, the tools its header grants, told the
-stored ACTION and the `Agent may` line, nothing else. The loop passes
-`--confirmed` on the send itself, because the person's yes to that exact
-proposal is the per-message approval. Anything the session tries beyond the
-stored action is refused by policy as usual. It ends with a one-line result
-the loop sends back.
-
-A session that fails, times out, or answers in another form counts as
-NOTHING; the failure is logged.
-
-## 8. Composing
-
-With `[reminders] compose = true`, reminder messages (step 2) are written by
-a headless, tool-less session from the reminder and its dereferenced refs,
-template fallback. Tone lives in `~/.inbox/compose.md`. Task messages come
-from the role session itself.
-
-## 9. Costs
-
-Python per tick: a handful of narrow connector queries per watched task.
-Agent calls: one per task per hit set, plus one when it becomes due, plus
-one per accepted proposal. A task nobody writes to and that is not due costs
-nothing.
-
-## 10. Order of work
-
-1. Replies: done and snooze from the phone.
-2. Task state files, the brief convention, `ws` gains `refs` and `watch` on
-   tasks (or they ride in the description until it does).
-3. Watches in Python, the NOTHING/MESSAGE/PROPOSE session, quiet hours.
-4. Proposals and acting with `--confirmed`.
+A quiet reminder costs nothing per pass: the watches are connector queries.
+An agent runs only when the person replies. Each turn is one headless call,
+ten seconds to a minute, logged with its cost in `inbox log`.
