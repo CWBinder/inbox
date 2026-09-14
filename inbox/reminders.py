@@ -296,6 +296,19 @@ def tell(text: str, r: Reminder | None = None, dry_run: bool = False) -> tuple[b
     return ok, (json.dumps(res) if res else err)
 
 
+def ensure_chat(r: Reminder) -> None:
+    """A reminder with a role is a chat of the same name, so `talk ID` works
+    the moment it is announced. Its session, if any, is shared both ways."""
+    from . import chats
+    if not r.role:
+        return
+    c = chats.get(r.id) or chats.Chat(name=r.id)
+    c.role, c.reminder, c.about = r.role, r.id, r.title
+    if r.session and not c.session:
+        c.session = r.session
+    chats.upsert(c)
+
+
 def announcement(r: Reminder, hits: list[str], why: str) -> str:
     lines = [f"[{r.id}] {r.title}"]
     if why == "due":
@@ -306,27 +319,16 @@ def announcement(r: Reminder, hits: list[str], why: str) -> str:
     if r.body.strip():
         first = next((l for l in r.body.splitlines() if l.strip()), "")
         lines.append(first[:200])
-    tail = f"Reply with what I should do (start with '{r.id}' if you are talking to several)"
-    if r.session:
-        tail += "; 'fresh' starts over"
-    tail += f". 'done {r.id}' closes it, 'snooze {r.id} 2h' pushes it."
-    lines.append(tail)
+    if r.role:
+        lines.append(f"Say 'talk {r.id}' to work on it, 'snooze {r.id} 2h' to push it.")
+    else:
+        lines.append(f"'snooze {r.id} 2h' pushes it; close it with `inbox remind done {r.id}`.")
     return "\n".join(lines)
 
 
 # ---- the person's replies ------------------------------------------------------
 
 _LAST_REPLY = paths.STATE / "last-reply.json"
-_CURRENT = paths.STATE / "current.json"
-
-
-def _current() -> dict:
-    return json.loads(_CURRENT.read_text()) if _CURRENT.is_file() else {}
-
-
-def _set_current(rid: str | None, choices: list[str] | None = None) -> None:
-    paths.STATE.mkdir(parents=True, exist_ok=True)
-    _CURRENT.write_text(json.dumps({"id": rid, "choices": choices or []}) + "\n")
 
 
 def _last_reply_seen() -> str | None:
@@ -359,83 +361,23 @@ def new_replies() -> list[dict]:
     return rows
 
 
-_CMD = re.compile(r"^\s*(done|snooze|fresh|resume)\b\s*(\S+)?\s*(.*)$", re.I)
-
-
-def _target_of(text: str) -> tuple[Reminder | None, str, list[Reminder]]:
-    """Which reminder a reply is about. In order: an id named in the text; a
-    number answering a pending choice; the reminder the person is currently
-    talking to; the only reminder told since they last wrote. Otherwise none,
-    and the candidates are returned so the loop can ask."""
-    ids = {r.id: r for r in open_reminders()}
-    for rid in sorted(ids, key=len, reverse=True):
-        if re.search(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", text):
-            return ids[rid], re.sub(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", "", text).strip(), []
-    cur = _current()
-    m = re.match(r"^\s*(\d+)\s*(.*)$", text, re.S)
-    if m and cur.get("choices"):
-        n = int(m.group(1))
-        if 1 <= n <= len(cur["choices"]) and cur["choices"][n - 1] in ids:
-            return ids[cur["choices"][n - 1]], m.group(2).strip(), []
-    if cur.get("id") in ids:
-        return ids[cur["id"]], text.strip(), []
-    told = sorted((r for r in ids.values() if r.told_at), key=lambda r: r.told_at, reverse=True)
-    if len(told) == 1:
-        return told[0], text.strip(), []
-    return None, text.strip(), told[:5]
-
-
 def handle_reply(m: dict, dry_run: bool = False) -> str:
+    """A message from the phone: the chat protocol decides. `snooze ID SPAN` is
+    the one reminder command kept here, since a chat has no due time."""
+    from . import chats
     text = (m.get("text") or "").strip()
-    sw = re.match(r"^\s*switch\s+(\S+)\s*$", text, re.I)
-    if sw:
-        rid = sw.group(1)
-        if rid in {x.id for x in open_reminders()}:
-            _set_current(rid); tell(f"[{rid}] now talking about this one.", None, dry_run)
-            return f"switched to {rid}"
-        tell(f"no open reminder '{rid}'. Open: " + ", ".join(x.id for x in open_reminders()), None, dry_run)
-        return f"switch: unknown {rid}"
-    r, rest, candidates = _target_of(text)
-    if r is None:
-        if candidates:
-            _set_current(None, [c.id for c in candidates])
-            listing = "\n".join(f"{i}  {c.id}: {c.title}" for i, c in enumerate(candidates, 1))
-            tell("Which one? Reply with the number, or start with the id.\n" + listing, None, dry_run)
-            return f"reply '{text[:40]}': asked which of {len(candidates)}"
-        tell("No open reminder to attach that to.", None, dry_run)
-        return f"reply '{text[:40]}': no open reminder"
-    _set_current(r.id)
-    if not rest:                                        # a bare number or id: chosen, waiting for the prompt
-        tell(f"[{r.id}] {r.title}. What should I do?", r, dry_run)
-        return f"{r.id}: selected"
-    cmd = _CMD.match(rest) or _CMD.match(text)
-    if cmd and cmd.group(1).lower() == "done":
-        r.status = "done"; r.note("done, by reply"); r.save()
-        _ws_close(r); _set_current(None)
-        tell(f"[{r.id}] closed.", r, dry_run)
-        return f"{r.id}: done"
-    if cmd and cmd.group(1).lower() == "snooze":
-        spec = (cmd.group(2) or "") + " " + (cmd.group(3) or "")
-        spec = spec.strip() or "2h"
+    sn = re.match(r"^\s*snooze\s+(\S+)\s*(.*)$", text, re.I)
+    if sn and any(r.id == sn.group(1) for r in open_reminders()):
+        r = get(sn.group(1)); spec = sn.group(2).strip() or "2h"
         try:
             until = when.parse("in " + spec) if spec[0].isdigit() else when.parse(spec)
         except when.WhenError:
             until = _now() + timedelta(hours=2)
-        r.status, r.due = "snoozed", _stamp(until); r.told_at = None; r.note(f"snoozed until {_stamp(until)}"); r.save()
+        r.status, r.due, r.told_at = "snoozed", _stamp(until), None
+        r.note(f"snoozed until {_stamp(until)}"); r.save()
         tell(f"[{r.id}] snoozed until {when.fmt(until)}.", r, dry_run)
-        return f"{r.id}: snoozed until {_stamp(until)}"
-    if cmd and cmd.group(1).lower() in ("fresh", "resume"):
-        r.mode = cmd.group(1).lower()
-        if r.mode == "fresh":
-            r.session = None
-        r.note(f"mode {r.mode}"); r.save()
-        remainder = ((cmd.group(2) or "") + " " + (cmd.group(3) or "")).strip()
-        if not remainder:
-            tell(f"[{r.id}] {r.mode}. What should I do?", r, dry_run)
-            return f"{r.id}: mode {r.mode}"
-        rest = remainder
-    # anything else is a prompt for the role
-    return converse(r, rest or text, dry_run)
+        return f"{r.id}: snoozed"
+    return chats.handle(text, lambda t: tell(t, None, dry_run), dry_run)
 
 
 def _ws_close(r: Reminder) -> None:
@@ -445,79 +387,24 @@ def _ws_close(r: Reminder) -> None:
             log.record("task-done", channel="ws", ok=True, detail=ref[3:], reminder=r.id)
 
 
-# ---- the agent session ---------------------------------------------------------
-
-def _role_file(role: str | None) -> Path | None:
-    if not role or not shutil.which("roster"):
-        return None
-    res = subprocess.run(["roster", "path", role], capture_output=True, text=True)
-    if res.returncode == 0 and res.stdout.strip():
-        return Path(res.stdout.strip())
-    return None
-
-
-def _system_prompt(r: Reminder) -> str:
-    base = ""
-    f = _role_file(r.role)
-    if f and f.is_file():
-        text = f.read_text(encoding="utf-8")
-        if text.startswith("---"):
-            text = text.split("---", 2)[2]
-        base = text.strip()
-    person = config.me().get("name", "the person")
-    return (base + "\n\n" if base else "") + f"""You are working on one reminder for {person}, who talks to you from a phone
-through a bot. Each message you receive is their instruction; your final answer is sent back to them
-verbatim. Answer in a few short sentences, outcome first, no preamble, no markdown headings. If you need
-a decision or a yes before acting, ask for it in one sentence and stop. Sending a message or mail needs
-their explicit yes in this conversation; pass --confirmed only then. Never widen the task beyond the
-reminder's "Agent may" line.
-
---- reminder {r.id} ---
-{r.render_file()}"""
-
+# ---- the agent session (via the reminder's chat) ----------------------------------
 
 def converse(r: Reminder, prompt: str, dry_run: bool = False) -> str:
-    """One turn of the person's conversation with the reminder's role."""
-    if not shutil.which("claude"):
-        return f"{r.id}: claude is not on PATH"
-    hits = check_watches(r)
-    full = prompt + ("\n\nNew since last check:\n" + "\n".join(f"- {h}" for h in hits) if hits else "")
-    # headless: nobody can approve a prompt, so the role's tools are allowed up front.
-    # The CLIs enforce their own policy (inbox refuses sends without --confirmed, ws only edits the store).
-    allowed = "Read Glob Grep Bash(inbox:*) Bash(ws:*) Bash(pplx:*) Bash(gmail:*) Bash(whatsapp:*) Bash(telegram:*) Bash(roster:*)"
-    argv = ["claude", "-p", full, "--output-format", "json", "--allowedTools", allowed]
-    resumed = bool(r.session and r.mode != "fresh")
-    if resumed:
-        argv += ["--resume", r.session]
-    else:
-        argv += ["--system-prompt", _system_prompt(r)]
+    """One turn with the reminder's role, from the terminal: the same chat the phone uses."""
+    from . import chats
+    ensure_chat(r)
+    c = chats.get(r.id)
+    if not c:
+        return f"{r.id}: no role, so no chat; add one with --role"
+    chats.set_current(r.id)
+    ok, answer = chats.turn(c, prompt, dry_run)
     if dry_run:
-        return f"{r.id}: would {'resume ' + r.session if resumed else 'start a fresh session'} with prompt: {prompt[:80]}"
-    tell(f"[{r.id}] on it.", r)
-    try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
-        data = json.loads(proc.stdout) if proc.stdout.strip() else {}
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-        tell(f"[{r.id}] the agent could not run: {e}", r)
-        return f"{r.id}: agent failed: {e}"
-    answer = str(data.get("result") or "").strip()
-    if data.get("is_error") or not answer:
-        reason = answer[:200] or proc.stderr[:200]
-        hint = " Run `claude login` on the Mac." if "authenticate" in reason.lower() or "oauth" in reason.lower() else ""
-        tell(f"[{r.id}] the agent could not run: {reason}{hint}", r)
-        r.note(f"agent turn failed: {reason[:80]}"); r.save()
-        log.record("agent-turn", channel=config.reminders_via().name, ok=False, detail=prompt[:200], result=reason, reminder=r.id)
-        return f"{r.id}: agent error: {reason[:80]}"
-    sid = data.get("session_id")
-    if sid:
-        r.session, r.mode = sid, "resume"
-    r.checked_at = _stamp()
-    r.note(f"turn: {prompt[:60]!r} -> {answer[:60]!r}")
-    r.save()
-    log.record("agent-turn", channel=config.reminders_via().name, ok=True, detail=prompt[:200], result=answer[:200],
-               reminder=r.id, session=sid, cost=data.get("total_cost_usd"))
-    tell(f"[{r.id}] {answer}\n\nReply to continue, or 'done {r.id}'.", r)
-    return f"{r.id}: turn done ({data.get('duration_ms', 0) // 1000}s)"
+        return answer
+    if ok and c.session and c.session != r.session:
+        r.session = c.session
+    r.checked_at = _stamp(); r.note(f"turn: {prompt[:60]!r} -> {answer[:60]!r}"); r.save()
+    tell(f"[{r.id}] {answer}" if ok else f"[{r.id}] could not run: {answer}", r)
+    return f"{r.id}: turn {'ok' if ok else 'FAILED'}"
 
 
 # ---- ws feed (due tasks without a reminder file) -----------------------------------
@@ -574,6 +461,8 @@ def run(dry_run: bool = False) -> list[str]:
                 r.checked_at = _stamp(); r.save()
             continue
         why = "due" if due else "watch"
+        if not dry_run:
+            ensure_chat(r)
         ok, msg = tell(announcement(r, hits, why), r, dry_run)
         if ok and not dry_run:
             r.status, r.told_at, r.checked_at = "told", _stamp(), _stamp()

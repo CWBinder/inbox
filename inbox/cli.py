@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, config, connectors, log, paths, policy, reminders, when
+from . import __version__, chats, config, connectors, log, paths, policy, reminders, when
 
 CONTRACT = ("--via", "--body", "--reply-to", "--attach", "--confirmed", "--json")
 
@@ -427,6 +427,40 @@ def cmd_remind(a):
         print(reminders.uninstall_timer())
 
 
+# ---- chats -------------------------------------------------------------------
+
+def cmd_chat(a):
+    c = a.chat_command
+    if c in (None, "list"):
+        print(chats.listing()); return
+    if c == "add":
+        if not chats.valid_name(a.name):
+            raise SystemExit("name: lowercase letters, digits, dashes")
+        chat = chats.get(a.name) or chats.Chat(name=a.name)
+        if a.session: chat.session = a.session
+        if a.role: chat.role = a.role
+        if a.about: chat.about = a.about
+        if a.cwd: chat.cwd = str(Path(a.cwd).expanduser().resolve())
+        chats.upsert(chat); print(f"chat {a.name}: " + ("session " + chat.session[:8] if chat.session else f"fresh, role {chat.role or 'none'}"))
+    elif c == "expose":
+        sid = a.session or __import__("os").environ.get("CLAUDE_SESSION_ID")
+        if not sid:
+            raise SystemExit("pass --session ID (this shell has no CLAUDE_SESSION_ID; find it with `claude --resume` or in ~/.claude/projects/)")
+        chat = chats.get(a.name) or chats.Chat(name=a.name)
+        chat.session, chat.about = sid, a.about or chat.about
+        chats.upsert(chat); print(f"chat {a.name} -> session {sid[:8]}; say 'talk {a.name}' on the phone")
+    elif c == "remove":
+        print("removed" if chats.remove(a.name) else "no such chat")
+    elif c == "talk":
+        if not chats.get(a.name): raise SystemExit("no such chat")
+        chats.set_current(a.name); print(f"current chat: {a.name}")
+    elif c == "say":
+        chat = chats.get(a.name)
+        if not chat: raise SystemExit("no such chat")
+        ok, answer = chats.turn(chat, " ".join(a.text), dry_run=a.dry_run)
+        print(answer if ok else f"FAILED: {answer}")
+
+
 # ---- policy / log ------------------------------------------------------------
 
 def cmd_policy(a):
@@ -527,6 +561,18 @@ examples:
     r = rs.add_parser("install"); r.add_argument("--every", type=int, default=10)
     rs.add_parser("uninstall")
     s.set_defaults(func=cmd_remind)
+
+    s = sub.add_parser("chat", help="chats you can talk to from the phone: list, add, expose, remove, talk, say")
+    cs = s.add_subparsers(dest="chat_command")
+    cs.add_parser("list")
+    x = cs.add_parser("add", help="name a chat: --session ID to resume, --role R to start fresh from a role")
+    x.add_argument("name"); x.add_argument("--session"); x.add_argument("--role"); x.add_argument("--about"); x.add_argument("--cwd")
+    x = cs.add_parser("expose", help="expose a claude session under a name (CLAUDE_SESSION_ID or --session)")
+    x.add_argument("name"); x.add_argument("--session"); x.add_argument("--about")
+    x = cs.add_parser("remove"); x.add_argument("name")
+    x = cs.add_parser("talk", help="make a chat current"); x.add_argument("name")
+    x = cs.add_parser("say", help="one turn from the terminal"); x.add_argument("name"); x.add_argument("text", nargs="+"); x.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_chat, chat_command=None)
 
     s = sub.add_parser("policy", help="show the send rules"); s.set_defaults(func=cmd_policy)
     s = sub.add_parser("log", help="everything sent, drafted, saved or refused"); s.add_argument("--since"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_log)

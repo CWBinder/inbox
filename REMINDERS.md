@@ -92,33 +92,26 @@ after a snooze, or when the person replies.
 
 ## 4. Replies
 
-A reply names a reminder by its id anywhere in the text; without one it goes
-to the most recently told reminder.
-
-| reply | effect |
-|---|---|
-| `done [id]` | closes it; a `ws:task:` ref is marked done |
-| `snooze [id] 2h` / `tomorrow 9am` | new due time, will be told again |
-| `fresh [id] [text]` | forget the session; start over (then `text` is the prompt) |
-| `resume [id] [text]` | continue the recorded session (the default when one exists) |
-| anything else | the prompt for one turn of the reminder's role |
+Messages on the reminder channel follow the chat protocol (README, "Chats").
+A reminder with a role is a chat of the same name. `talk ID` selects it;
+every later message is a prompt for its role, resumed in the recorded session
+or fresh on the first turn; `done` closes chat and reminder; `snooze ID 2h`
+pushes the reminder. Nothing is guessed: with no current chat the bot lists
+the names.
 
 ## 5. A turn
 
-The person's text is the prompt. The loop starts Claude headless: resumed
-with `--resume <session>` when the reminder has one and the mode is not
-fresh, else fresh with the role's installed subagent file as the system
-prompt (`roster path ROLE`) plus the reminder file verbatim and the rule that
-the answer goes to a phone. New watch hits since the last check are appended
-to the prompt. The role runs with its full tools; sending still needs the
-person's yes in the conversation, which the role gives as `--confirmed`.
-
-The session's final answer is sent back verbatim, with "reply to continue,
-or done". Its session id is recorded in the reminder, so the next reply
-continues it. `inbox remind say ID TEXT` is the same turn from a terminal.
+The prompt is the person's text. The loop runs Claude headless with the tool
+CLIs allowed (`inbox`, `ws`, `pplx`, the connectors, Read/Glob/Grep):
+`--resume <session>` when the chat has one, else `--system-prompt` built from
+the role's installed subagent file (`roster path ROLE`) plus the reminder
+file verbatim and the rule that the answer goes to a phone. The final answer
+is sent back verbatim under `[id]`; the session id is recorded on the chat
+and the reminder, so the next message continues it. `inbox remind say ID
+TEXT` is the same turn from a terminal.
 
 ## 6. Costs
 
 A quiet reminder costs nothing per pass: the watches are connector queries.
-An agent runs only when the person replies. Each turn is one headless call,
+An agent runs only when the person writes. Each turn is one headless call,
 ten seconds to a minute, logged with its cost in `inbox log`.

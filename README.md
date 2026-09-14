@@ -83,20 +83,37 @@ message. `allow_to = ["me"]` restricts a channel to named recipients. When
 policy says yes, inbox lifts the connector's own send guard for that one
 call.
 
+## Chats: talking to sessions from your phone
+
+`~/.inbox/chats.toml` names the conversations you can reach from the reminder
+channel. A chat resumes a claude session, or starts fresh from a roster role.
+One chat is current. On the phone:
+
+```
+chats            the list
+talk NAME        switch; the bot answers "[NAME] talking to NAME"
+new NAME         a fresh chat under that name
+done             close the current chat (and its reminder, if it has one)
+anything else    a prompt for the current chat; the answer comes back as [NAME] ...
+```
+
+From a terminal: `inbox chat list | add NAME [--session ID] [--role R] [--about ...] | expose NAME | remove NAME | say NAME TEXT`.
+`inbox chat expose NAME --session ID` puts a session you are sitting in on the phone.
+
 ## Reminders
 
-The full model is in [REMINDERS.md](REMINDERS.md). In short: a reminder is a
-Markdown file with a due time, refs, watches, a role and a brief. The pass
-runs on a timer, tells you on your reminder channel when a reminder is due or
-one of its watches fired, and reads your replies. `done` and `snooze` are
-bookkeeping; anything else is a prompt for the reminder's role, run headless,
-whose answer comes back to your phone. Every reply continues the same session.
+The full model is in [REMINDERS.md](REMINDERS.md). A reminder is a Markdown
+file with a due time, refs, watches, an optional role and a brief. The pass
+runs on a timer and tells you on the reminder channel when one is due or a
+watch fired. A reminder with a role is also a chat of the same name, so
+`talk ID` works the moment it is announced; a plain reminder is only a poke.
+`snooze ID 2h` from the phone pushes one.
 
 ```
 inbox remind add TEXT --due WHEN [--ref K:V] [--watch K:V] [--role R]
 inbox remind new TEXT --due WHEN ...          the brief template, opened in $EDITOR
-inbox remind list | show ID | check ID
-inbox remind say ID TEXT                      one turn, from the terminal
+inbox remind list | show ID | check ID | done ID | snooze ID --until WHEN
+inbox remind say ID TEXT                      one turn with its chat, from the terminal
 inbox remind run [--dry-run] | install [--every 10]
 ```
 
