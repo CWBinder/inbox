@@ -3,13 +3,14 @@ commands (connectors), one merged view, a policy on what may be sent, reminders
 that reach your phone, and a log of everything sent."""
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, chats, config, connectors, log, paths, policy, reminders, when
+from . import __version__, chats, config, connectors, log, paths, policy, reminders, roles, when
 
 CONTRACT = ("--via", "--body", "--reply-to", "--attach", "--confirmed", "--json")
 
@@ -429,31 +430,80 @@ def cmd_remind(a):
 
 # ---- chats -------------------------------------------------------------------
 
+def cmd_agent(a):
+    try:
+        if a.agent_command == "expose":
+            name = chats.expose_agent(a.role, a.name, a.about)
+            print(f"agent {name} exposed; 'talk {name}' starts a new conversation")
+        elif a.agent_command == "hide":
+            print("hidden" if chats.hide_agent(a.name) else "no such exposed agent")
+        elif a.all:
+            for name, description in roles.available().items():
+                print(name + chats._description(description))
+        else:
+            print(chats.role_listing())
+    except ValueError as e:
+        raise SystemExit(str(e))
+
+
 def cmd_chat(a):
     c = a.chat_command
     if c in (None, "list"):
         print(chats.listing()); return
+    if c == "roles":
+        print(chats.role_listing()); return
     if c == "add":
-        if not chats.valid_name(a.name):
-            raise SystemExit("name: lowercase letters, digits, dashes")
+        try:
+            chats.check_conversation_name(a.name)
+        except ValueError as e:
+            raise SystemExit(str(e))
         chat = chats.get(a.name) or chats.Chat(name=a.name)
+        chat.exposed = True
         if a.session: chat.session = a.session
         if a.role: chat.role = a.role
         if a.about: chat.about = a.about
         if a.cwd: chat.cwd = str(Path(a.cwd).expanduser().resolve())
         chats.upsert(chat); print(f"chat {a.name}: " + ("session " + chat.session[:8] if chat.session else f"fresh, role {chat.role or 'none'}"))
     elif c == "expose":
-        sid = a.session or __import__("os").environ.get("CLAUDE_SESSION_ID")
-        if not sid:
-            raise SystemExit("pass --session ID (this shell has no CLAUDE_SESSION_ID; find it with `claude --resume` or in ~/.claude/projects/)")
+        try:
+            chats.check_conversation_name(a.name)
+        except ValueError as e:
+            raise SystemExit(str(e))
         chat = chats.get(a.name) or chats.Chat(name=a.name)
+        backend = a.backend
+        if not backend:
+            if not a.session and chat.session:
+                backend = chat.backend
+            elif not a.session and os.environ.get("CODEX_THREAD_ID"):
+                backend = "codex"
+            else:
+                backend = "claude"
+        sid = a.session or (chat.session if chat.backend == backend else None) or os.environ.get("CODEX_THREAD_ID" if backend == "codex" else "CLAUDE_SESSION_ID")
+        if not sid:
+            raise SystemExit(f"No {backend} session in this shell; pass --backend {backend} --session ID.")
+        if chat.session and (chat.session != sid or chat.backend != backend):
+            raise SystemExit(f"'{a.name}' already exposes another conversation; choose another name.")
+        chat.backend = backend
+        chat.exposed = True
         chat.session, chat.about = sid, a.about or chat.about
-        chats.upsert(chat); print(f"chat {a.name} -> session {sid[:8]}; say 'talk {a.name}' on the phone")
+        chat.cwd = str(Path(a.cwd).expanduser().resolve()) if a.cwd else chat.cwd or str(Path.cwd())
+        chats.upsert(chat); print(f"chat {a.name} exposed ({backend}); say 'talk {a.name}' on the phone")
     elif c == "remove":
         print("removed" if chats.remove(a.name) else "no such chat")
+    elif c == "hide":
+        print("hidden; session retained" if chats.hide_conversation(a.name) else "no such chat")
     elif c == "talk":
-        if not chats.get(a.name): raise SystemExit("no such chat")
-        chats.set_current(a.name); print(f"current chat: {a.name}")
+        try:
+            chat = chats.select(a.name)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        print(f"current chat: {chat.name}")
+    elif c == "save":
+        try:
+            chat = chats.save_current(a.name)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        print(f"saved {chat.name}; say 'talk {chat.name}' on the phone")
     elif c == "say":
         chat = chats.get(a.name)
         if not chat: raise SystemExit("no such chat")
@@ -562,17 +612,28 @@ examples:
     rs.add_parser("uninstall")
     s.set_defaults(func=cmd_remind)
 
-    s = sub.add_parser("chat", help="chats you can talk to from the phone: list, add, expose, remove, talk, say")
+    s = sub.add_parser("chat", help="phone conversations: roles, list, talk, save, add, expose, remove, say")
     cs = s.add_subparsers(dest="chat_command")
     cs.add_parser("list")
+    cs.add_parser("roles", help="exposed agents")
     x = cs.add_parser("add", help="name a chat: --session ID to resume, --role R to start fresh from a role")
     x.add_argument("name"); x.add_argument("--session"); x.add_argument("--role"); x.add_argument("--about"); x.add_argument("--cwd")
-    x = cs.add_parser("expose", help="expose a claude session under a name (CLAUDE_SESSION_ID or --session)")
-    x.add_argument("name"); x.add_argument("--session"); x.add_argument("--about")
+    x = cs.add_parser("expose", help="expose a Claude or Codex session under a name")
+    x.add_argument("name"); x.add_argument("--session"); x.add_argument("--about"); x.add_argument("--cwd")
+    x.add_argument("--backend", choices=("claude", "codex"), help="auto-detected from the current session environment when no ID is given")
     x = cs.add_parser("remove"); x.add_argument("name")
-    x = cs.add_parser("talk", help="make a chat current"); x.add_argument("name")
+    x = cs.add_parser("hide", help="hide a conversation while retaining its session"); x.add_argument("name")
+    x = cs.add_parser("talk", help="resume an exposed conversation or start an exposed agent fresh"); x.add_argument("name")
+    x = cs.add_parser("save", help="name the current conversation"); x.add_argument("name")
     x = cs.add_parser("say", help="one turn from the terminal"); x.add_argument("name"); x.add_argument("text", nargs="+"); x.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_chat, chat_command=None)
+
+    s = sub.add_parser("agent", help="choose which agents are available on the phone")
+    cs = s.add_subparsers(dest="agent_command")
+    x = cs.add_parser("list"); x.add_argument("--all", action="store_true", help="all roster roles, including unexposed ones")
+    x = cs.add_parser("expose"); x.add_argument("role"); x.add_argument("--name", help="short name on the phone"); x.add_argument("--about", help="short description")
+    x = cs.add_parser("hide"); x.add_argument("name")
+    s.set_defaults(func=cmd_agent, agent_command=None, all=False)
 
     s = sub.add_parser("policy", help="show the send rules"); s.set_defaults(func=cmd_policy)
     s = sub.add_parser("log", help="everything sent, drafted, saved or refused"); s.add_argument("--since"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_log)

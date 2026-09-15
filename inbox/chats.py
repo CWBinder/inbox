@@ -1,13 +1,8 @@
-"""Chats: named conversations you can talk to from your phone.
+"""Phone conversations and an explicit catalog of exposed agents.
 
-~/.inbox/chats.toml lists them. Each has a name, optionally a claude session
-to resume and a roster role to start fresh from, and a one-line `about`.
-One chat is current; a message from the phone is either a command (chats,
-talk NAME, new NAME, done) or a prompt for the current chat. Every bot
-message starts with [name]. No routing, no guessing: with no current chat
-the bot says so and lists the names.
-
-A reminder with a role becomes a chat of the same name when it is announced.
+`chats` shows agents (always start fresh) and conversations (resume).
+Fresh conversations stay out of the catalog until `save NAME`; reminders
+expose their own conversation when announced. One conversation is current.
 """
 import json
 import re
@@ -20,6 +15,7 @@ from pathlib import Path
 from . import config, connectors, log, paths, roles
 
 CHATS = paths.HOME / "chats.toml"
+AGENTS = paths.HOME / "agents.toml"
 CURRENT = paths.STATE / "current-chat.json"
 TOOLS = "Read Glob Grep Bash(inbox:*) Bash(ws:*) Bash(pplx:*) Bash(gmail:*) Bash(whatsapp:*) Bash(telegram:*) Bash(roster:*)"
 
@@ -32,6 +28,8 @@ class Chat:
     about: str = ""
     reminder: str | None = None            # a reminder id this chat is about, if any
     cwd: str | None = None                 # working folder for fresh sessions
+    backend: str = "claude"               # existing entries remain Claude sessions
+    exposed: bool = True                  # old saved conversations remain available
 
 
 def _load() -> dict[str, Chat]:
@@ -42,14 +40,20 @@ def _load() -> dict[str, Chat]:
     out = {}
     for name, spec in (data.get("chats") or {}).items():
         out[name] = Chat(name=name, session=spec.get("session") or None, role=spec.get("role") or None,
-                         about=str(spec.get("about", "")), reminder=spec.get("reminder") or None, cwd=spec.get("cwd") or None)
+                         about=str(spec.get("about", "")), reminder=spec.get("reminder") or None,
+                         cwd=spec.get("cwd") or None, backend=str(spec.get("backend", "claude")),
+                         exposed=bool(spec.get("exposed", True)))
     return out
 
 
 def _save(chats: dict[str, Chat]) -> None:
     lines = ["# Chats you can talk to from the phone: `talk NAME`. Managed by inbox; edit freely.", ""]
     for c in chats.values():
-        lines.append(f"[chats.{c.name}]")
+        lines.append(f"[chats.{json.dumps(c.name)}]")
+        if not c.exposed:
+            lines.append("exposed = false")
+        if c.backend != "claude":
+            lines.append(f"backend = {json.dumps(c.backend)}")
         for key in ("session", "role", "reminder", "cwd"):
             v = getattr(c, key)
             if v:
@@ -57,6 +61,7 @@ def _save(chats: dict[str, Chat]) -> None:
         if c.about:
             lines.append(f"about = {json.dumps(c.about)}")
         lines.append("")
+    CHATS.parent.mkdir(parents=True, exist_ok=True)
     CHATS.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -98,21 +103,156 @@ def set_current(name: str | None) -> None:
 
 
 def valid_name(name: str) -> bool:
-    return bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", name))
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]{0,62}[A-Za-z0-9]|[A-Za-z0-9]", name))
+
+
+def exposed_agents() -> dict[str, dict[str, str]]:
+    if not AGENTS.is_file():
+        return {}
+    with AGENTS.open("rb") as fh:
+        return tomllib.load(fh).get("agents", {})
+
+
+def _save_agents(agents: dict[str, dict[str, str]]) -> None:
+    lines = ["# Agents explicitly exposed to the phone. Each selection starts fresh.", ""]
+    for name, spec in agents.items():
+        lines += [f"[agents.{json.dumps(name)}]", f"role = {json.dumps(spec['role'])}",
+                  f"about = {json.dumps(spec.get('about', ''))}", ""]
+    AGENTS.parent.mkdir(parents=True, exist_ok=True)
+    AGENTS.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _matching_name(name: str, names) -> str | None:
+    return next((n for n in names if n.casefold() == name.casefold()), None)
+
+
+def check_conversation_name(name: str) -> None:
+    if not valid_name(name):
+        raise ValueError("Use a short name with letters, digits, spaces or dashes (up to 64 characters).")
+    if _matching_name(name, exposed_agents()):
+        raise ValueError(f"'{name}' names an exposed agent. Choose a different conversation name.")
+    other = _matching_name(name, _load())
+    if other and other != name:
+        raise ValueError(f"A conversation named '{other}' already exists. Use that spelling or another name.")
+
+
+def expose_agent(role: str, name: str | None = None, about: str | None = None) -> str:
+    name = name or role
+    if not valid_name(name):
+        raise ValueError("Use a short agent name with letters, digits, spaces or dashes.")
+    if _matching_name(name, _load()):
+        raise ValueError(f"'{name}' already names a conversation. Use --name to choose a different agent name.")
+    catalog = roles.available()
+    if role not in catalog:
+        raise ValueError(f"No roster role '{role}'. Use 'inbox agent list --all' to see roles you can expose.")
+    agents = exposed_agents()
+    existing = _matching_name(name, agents)
+    if existing and (existing != name or agents[existing]['role'] != role):
+        raise ValueError(f"An agent named '{existing}' is already exposed. Choose a different name.")
+    agents[name] = {"role": role, "about": about if about is not None else agents.get(name, {}).get('about', catalog[role])}
+    _save_agents(agents)
+    return name
+
+
+def hide_agent(name: str) -> bool:
+    agents = exposed_agents()
+    actual = _matching_name(name, agents)
+    if not actual:
+        return False
+    del agents[actual]
+    _save_agents(agents)
+    return True
+
+
+def hide_conversation(name: str) -> bool:
+    actual = _matching_name(name, _load())
+    chat = get(actual) if actual else None
+    if not chat:
+        return False
+    chat.exposed = False
+    upsert(chat)
+    return True
+
+
+def _fresh_name(base: str) -> str:
+    names = [*_load(), *exposed_agents()]
+    n = 1
+    while True:
+        suffix = f" {n}"
+        name = base[:64 - len(suffix)].rstrip() + suffix
+        if not _matching_name(name, names):
+            return name
+        n += 1
+
+
+def select(name: str) -> Chat:
+    """An exposed agent always starts fresh; an exposed conversation resumes."""
+    agents = exposed_agents()
+    agent_name = _matching_name(name, agents)
+    if agent_name:
+        spec = agents[agent_name]
+        if not roles.system_prompt(spec['role']):
+            raise ValueError(f"Could not load instructions for agent '{agent_name}'. Check its roster role on the Mac.")
+        chat = upsert(Chat(name=_fresh_name(agent_name), role=spec['role'], exposed=False))
+    else:
+        actual = _matching_name(name, [c.name for c in _load().values() if c.exposed])
+        chat = get(actual) if actual else None
+        if chat is None:
+            raise ValueError(f"No exposed agent or conversation '{name}'. Say 'chats' to see what is available.")
+    set_current(chat.name)
+    return chat
+
+
+def save_current(name: str) -> Chat:
+    """Give the current conversation a name without duplicating its session."""
+    check_conversation_name(name)
+    chats = _load()
+    old = current()
+    if old not in chats:
+        raise ValueError("No current chat. Say 'talk ROLE' or 'talk NAME' first.")
+    if name != old and name in chats:
+        raise ValueError(f"A chat named '{name}' already exists. Choose another name.")
+    chat = chats.pop(old)
+    chat.name = name
+    chat.exposed = True
+    chats[name] = chat
+    _save(chats)
+    set_current(name)
+    return chat
 
 
 # ---- listing for the phone -------------------------------------------------------
 
+def role_listing() -> str:
+    lines = ["Agents — start a new conversation"]
+    for name, spec in sorted(exposed_agents().items(), key=lambda item: item[0].casefold()):
+        lines.append(f"• {name}" + _description(spec.get('about', '')))
+    if len(lines) == 1:
+        lines.append("None exposed yet.")
+    return "\n".join(lines)
+
+
+def _description(text: str) -> str:
+    summary = " ".join(text.split())
+    if len(summary) > 90:
+        summary = summary[:87].rsplit(" ", 1)[0] + "…"
+    return f" — {summary}" if summary else ""
+
+
 def listing() -> str:
-    chats = _load()
-    if not chats:
-        return "No chats yet. Say 'new NAME' to start one."
+    chats = sorted((c for c in _load().values() if c.exposed), key=lambda c: c.name.casefold())
     cur = current()
-    lines = ["Chats (say 'talk NAME'):"]
-    for c in chats.values():
-        mark = "*" if c.name == cur else " "
-        state = "session" if c.session else (f"fresh, role {c.role}" if c.role else "fresh")
-        lines.append(f"{mark} {c.name}  {c.about or ''}  [{state}]")
+    lines = [role_listing(), "", "Conversations — resume where you left off"]
+    for c in chats:
+        mark = " (current)" if c.name == cur else ""
+        ready = " (not started)" if not c.session else ""
+        lines.append(f"• {c.name}{mark}{ready}" + _description(c.about))
+    if not chats:
+        lines.append("None exposed yet.")
+    lines += ["", "talk NAME → select, then send your message.", "save NAME → keep the current conversation in this list."]
+    active = get(cur) if cur else None
+    if active and not active.exposed:
+        lines.append(f"Current: {cur} (not saved to this list).")
     return "\n".join(lines)
 
 
@@ -137,6 +277,15 @@ and stop. Sending a message or mail needs their explicit yes in this conversatio
 
 def turn(chat: Chat, prompt: str, dry_run: bool = False) -> tuple[bool, str]:
     """Run one turn: resume the chat's session, or start fresh. Returns (ok, answer)."""
+    if chat.backend == "codex":
+        from . import codex
+        ok, answer = codex.turn(chat.session, prompt, cwd=chat.cwd, dry_run=dry_run)
+        if not dry_run:
+            log.record("chat-turn", channel=config.reminders_via().name, ok=ok, detail=prompt[:200],
+                       result=answer[:200], chat=chat.name, session=chat.session, backend="codex")
+        return ok, answer
+    if chat.backend != "claude":
+        return False, f"unknown chat backend '{chat.backend}'"
     if not shutil.which("claude"):
         return False, "claude is not on PATH"
     argv = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", TOOLS]
@@ -169,7 +318,7 @@ def turn(chat: Chat, prompt: str, dry_run: bool = False) -> tuple[bool, str]:
 
 # ---- the phone protocol -----------------------------------------------------------
 
-_CMD = re.compile(r"^\s*(chats|talk|new|done|who)\b\s*(\S+)?\s*$", re.I)
+_CMD = re.compile(r"^\s*(?:(roles|agents|chats|available|available chats|done|who)|(talk|save|new)(?:[ \t]+([^\r\n]+?))?)\s*$", re.I)
 
 
 def handle(text: str, tell, dry_run: bool = False) -> str:
@@ -177,22 +326,35 @@ def handle(text: str, tell, dry_run: bool = False) -> str:
     text = text.strip()
     m = _CMD.match(text)
     if m:
-        cmd, arg = m.group(1).lower(), m.group(2)
-        if cmd in ("chats", "who"):
+        cmd, arg = (m.group(1) or m.group(2)).lower(), m.group(3)
+        if cmd in ("roles", "agents", "chats", "available", "available chats", "who"):
             tell(listing()); return "listed chats"
         if cmd == "talk":
-            if not arg or not get(arg):
-                tell(f"No chat '{arg or ''}'.\n" + listing()); return f"talk: unknown {arg}"
-            set_current(arg)
-            c = get(arg)
-            tell(f"[{arg}] talking to {arg}" + (f": {c.about}" if c.about else "") + ". What should I do?")
+            if not arg:
+                tell(listing())
+                return "listed talk choices"
+            try:
+                c = select(arg)
+            except ValueError as e:
+                tell(str(e)); return f"talk: unavailable {arg}"
+            action = "New conversation" if not c.session else "Resuming conversation"
+            tell(f"[{c.name}] {action}. Send your message." + (" Use 'save NAME' to keep it in chats." if not c.exposed else ""))
             return f"talk {arg}"
+        if cmd == "save":
+            try:
+                c = save_current(arg or "")
+            except ValueError as e:
+                tell(str(e)); return "save: unavailable"
+            tell(f"[{c.name}] saved. Return to this conversation with 'talk {c.name}'.")
+            return f"saved {c.name}"
         if cmd == "new":
-            if not arg or not valid_name(arg):
-                tell("Say 'new NAME' with a short lowercase name."); return "new: bad name"
+            try:
+                check_conversation_name(arg or "")
+            except ValueError as e:
+                tell(str(e)); return "new: bad name"
             if get(arg):
                 tell(f"[{arg}] exists; say 'talk {arg}'."); return f"new: exists {arg}"
-            upsert(Chat(name=arg)); set_current(arg)
+            upsert(Chat(name=arg, exposed=False)); set_current(arg)
             tell(f"[{arg}] new chat. What should I do?"); return f"new {arg}"
         if cmd == "done":
             cur = current()

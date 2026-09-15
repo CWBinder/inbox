@@ -77,7 +77,7 @@ runs them now.
 
 ## 3. The pass
 
-`inbox remind run`, every ten minutes from launchd. No agent unless the
+`inbox remind run`, at the configured launchd interval (currently every minute on Christian’s Mac). No agent unless the
 person asks for one.
 
 1. Read the person's replies on the reminder channel since the last pass.
@@ -93,11 +93,19 @@ after a snooze, or when the person replies.
 ## 4. Replies
 
 Messages on the reminder channel follow the chat protocol (README, "Chats").
-A reminder with a role is a chat of the same name. `talk ID` selects it;
-every later message is a prompt for its role, resumed in the recorded session
-or fresh on the first turn; `done` closes chat and reminder; `snooze ID 2h`
-pushes the reminder. Nothing is guessed: with no current chat the bot lists
-the names.
+A reminder with a role gets an exposed conversation when announced. `chats`
+shows two blocks: exposed agents (start fresh) and exposed conversations
+(resume). `talk NAME` selects either; every selection of an agent starts a new
+conversation, while the reminder’s conversation retains its recorded session.
+The notification tells you which name to select. It does not change your
+current conversation automatically.
+
+`save NAME` names and exposes the current conversation while preserving its
+session and reminder link. `done` closes the current conversation and its linked
+reminder; `snooze ID 2h` postpones the reminder. With no current conversation,
+the bot shows the menu. Exposing a reminder does not expose its role as a generic
+agent; use `inbox agent expose ROLE` for that. A future reminder notification
+re-exposes its conversation if it was hidden.
 
 ## 5. A turn
 

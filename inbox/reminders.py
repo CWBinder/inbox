@@ -302,8 +302,14 @@ def ensure_chat(r: Reminder) -> None:
     from . import chats
     if not r.role:
         return
-    c = chats.get(r.id) or chats.Chat(name=r.id)
+    c = next((c for c in chats.all_chats().values() if c.reminder == r.id), None)
+    if c is None:
+        name = r.id
+        if chats._matching_name(name, [*chats.all_chats(), *chats.exposed_agents()]):
+            name = chats._fresh_name(name)
+        c = chats.Chat(name=name)
     c.role, c.reminder, c.about = r.role, r.id, r.title
+    c.exposed = True
     if r.session and not c.session:
         c.session = r.session
     chats.upsert(c)
@@ -320,7 +326,9 @@ def announcement(r: Reminder, hits: list[str], why: str) -> str:
         first = next((l for l in r.body.splitlines() if l.strip()), "")
         lines.append(first[:200])
     if r.role:
-        lines.append(f"Say 'talk {r.id}' to work on it, 'snooze {r.id} 2h' to push it.")
+        from . import chats
+        name = next((c.name for c in chats.all_chats().values() if c.reminder == r.id), r.id)
+        lines.append(f"Say 'talk {name}' to work on it, 'snooze {r.id} 2h' to push it.")
     else:
         lines.append(f"'snooze {r.id} 2h' pushes it; close it with `inbox remind done {r.id}`.")
     return "\n".join(lines)
@@ -393,10 +401,10 @@ def converse(r: Reminder, prompt: str, dry_run: bool = False) -> str:
     """One turn with the reminder's role, from the terminal: the same chat the phone uses."""
     from . import chats
     ensure_chat(r)
-    c = chats.get(r.id)
+    c = next((c for c in chats.all_chats().values() if c.reminder == r.id), None)
     if not c:
         return f"{r.id}: no role, so no chat; add one with --role"
-    chats.set_current(r.id)
+    chats.set_current(c.name)
     ok, answer = chats.turn(c, prompt, dry_run)
     if dry_run:
         return answer

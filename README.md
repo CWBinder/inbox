@@ -83,22 +83,88 @@ message. `allow_to = ["me"]` restricts a channel to named recipients. When
 policy says yes, inbox lifts the connector's own send guard for that one
 call.
 
-## Chats: talking to sessions from your phone
+## Chats: agents and conversations on your phone
 
-`~/.inbox/chats.toml` names the conversations you can reach from the reminder
-channel. A chat resumes a claude session, or starts fresh from a roster role.
-One chat is current. On the phone:
+Send `chats` for one menu with two blocks:
+
+- **Agents — start a new conversation.** Only agents you explicitly expose.
+- **Conversations — resume where you left off.** Only conversations you save
+  or expose, plus reminder conversations made available when announced.
+
+`talk NAME` selects an entry; your next message tells the agent what to do.
+Choosing an agent **always starts fresh**, even if you previously talked to
+that agent. Choosing a conversation continues its saved session. Agent and
+conversation names cannot overlap; names are matched without regard to case.
+An exposed reminder or conversation with no session yet is marked “not started”.
 
 ```
-chats            the list
-talk NAME        switch; the bot answers "[NAME] talking to NAME"
-new NAME         a fresh chat under that name
-done             close the current chat (and its reminder, if it has one)
-anything else    a prompt for the current chat; the answer comes back as [NAME] ...
+chats            agents and conversations in two blocks
+talk NAME       select an agent or conversation, then send your message
+save NAME        name and expose the current conversation for later
+done             close the current conversation and its linked reminder
+anything else    a prompt for the current conversation
 ```
 
-From a terminal: `inbox chat list | add NAME [--session ID] [--role R] [--about ...] | expose NAME | remove NAME | say NAME TEXT`.
-`inbox chat expose NAME --session ID` puts a session you are sitting in on the phone.
+`available`, `available chats`, `agents`, `roles`, and `who` are aliases for
+`chats`. `new NAME` creates a generic conversation without an agent role.
+
+For example: `talk librarian`, discuss a paper, then `save Readout papers`.
+Later, `talk Readout papers` continues that conversation. `talk librarian`
+always starts a new one. New conversations receive a temporary name such as
+“librarian 1” and stay out of the menu until you save them. Switching chats
+retains their local session records. Saving preserves the history and reminder
+link and refuses to overwrite another saved name.
+
+### Exposing agents
+
+On the Mac, expose only the roles you want available on the phone:
+
+```bash
+inbox agent list --all                          # roster roles you can choose from
+inbox agent expose email --name Emma --about "Email help"
+inbox agent expose logistics --about "Messages and coordination"
+inbox agent list                               # only exposed agents
+inbox agent hide Emma                           # stop offering fresh Emma chats
+```
+
+`--name` and `--about` are optional. Agent exposure is stored in
+`~/.inbox/agents.toml`; no roster role is exposed by default. Instructions
+come from the installed prompt when available, otherwise the roster definition.
+Hiding an agent leaves its saved conversations usable.
+
+### Exposing conversations
+
+On the phone, `save NAME` exposes the current conversation. From an existing
+agent session on the Mac, run:
+
+```bash
+inbox chat expose "Inbox Chat" --about "Telegram and reminder design"
+```
+
+Inbox detects `CODEX_THREAD_ID` or `CLAUDE_SESSION_ID` and records the working
+folder. If neither is available, specify `--backend codex --session ID` (or
+`--backend claude --session ID`) on the Mac. `--cwd DIR` supplies a different
+folder. You can also ask the agent in the desired conversation to expose it
+under a short name. IDs never need to be typed on the phone.
+
+```bash
+inbox chat hide "Inbox Chat"        # hide from the menu, retain the session
+inbox chat expose "Inbox Chat"      # re-expose that stored conversation
+inbox chat list                     # preview the phone menu locally
+```
+
+Names and session IDs live in `~/.inbox/chats.toml`. Existing saved entries
+remain exposed. Exposing refuses to replace a different session under an
+existing name. Reminder notifications re-expose their linked conversation.
+`inbox chat add NAME` remains available for manually registering a conversation;
+`inbox chat remove NAME` removes its registration without deleting backend history.
+
+Every message starts a new CLI process which resumes the saved conversation.
+Claude role chats still use Claude; exposed Codex conversations use
+`codex exec resume` with the existing account and permission configuration.
+Codex's final response is returned to the phone. Desktop-only tools are not
+guaranteed to be available in the CLI. Use one interface at a time for a
+given session to avoid simultaneous turns against the same history.
 
 ## Reminders
 
