@@ -126,39 +126,70 @@ def _matching_name(name: str, names) -> str | None:
     return next((n for n in names if n.casefold() == name.casefold()), None)
 
 
+def _agent_match(selector: str, agents: dict[str, dict[str, str]] | None = None) -> tuple[str, dict[str, str]] | None:
+    """An exposed agent is addressable by its friendly name or roster role."""
+    source = exposed_agents() if agents is None else agents
+    for name, spec in source.items():
+        if selector.casefold() in (name.casefold(), str(spec["role"]).casefold()):
+            return name, spec
+    return None
+
+
+def _agent_selectors(agents: dict[str, dict[str, str]] | None = None) -> list[str]:
+    out = []
+    source = exposed_agents() if agents is None else agents
+    for name, spec in source.items():
+        out += [name, str(spec["role"])]
+    return out
+
+
 def check_conversation_name(name: str) -> None:
     if not valid_name(name):
         raise ValueError("Use a short name with letters, digits, spaces or dashes (up to 64 characters).")
-    if _matching_name(name, exposed_agents()):
-        raise ValueError(f"'{name}' names an exposed agent. Choose a different conversation name.")
+    matched = _agent_match(name)
+    if matched:
+        agent_name, spec = matched
+        raise ValueError(f"'{name}' selects the exposed agent '{agent_name}' ({spec['role']}). Choose a different conversation name.")
     other = _matching_name(name, _load())
     if other and other != name:
         raise ValueError(f"A conversation named '{other}' already exists. Use that spelling or another name.")
 
 
 def expose_agent(role: str, name: str | None = None, about: str | None = None) -> str:
-    name = name or role
+    catalog = roles.available()
+    actual_role = _matching_name(role, catalog)
+    if not actual_role:
+        raise ValueError(f"No roster role '{role}'. Use 'roster list roles' to see available roles.")
+    agents = exposed_agents()
+    same_role = next(((n, spec) for n, spec in agents.items()
+                      if str(spec["role"]).casefold() == actual_role.casefold()), None)
+    name = name or (same_role[0] if same_role else actual_role)
     if not valid_name(name):
         raise ValueError("Use a short agent name with letters, digits, spaces or dashes.")
-    if _matching_name(name, _load()):
-        raise ValueError(f"'{name}' already names a conversation. Use --name to choose a different agent name.")
-    catalog = roles.available()
-    if role not in catalog:
-        raise ValueError(f"No roster role '{role}'. Use 'inbox agent list --all' to see roles you can expose.")
-    agents = exposed_agents()
-    existing = _matching_name(name, agents)
-    if existing and (existing != name or agents[existing]['role'] != role):
+    chats = _load()
+    conflict = _matching_name(name, chats) or _matching_name(actual_role, chats)
+    if conflict:
+        raise ValueError(f"'{conflict}' already names a conversation. Choose a different agent name or conversation name.")
+    others = {n: spec for n, spec in agents.items() if not same_role or n != same_role[0]}
+    conflict = _agent_match(name, others) or _agent_match(actual_role, others)
+    if conflict:
+        existing, _ = conflict
         raise ValueError(f"An agent named '{existing}' is already exposed. Choose a different name.")
-    agents[name] = {"role": role, "about": about if about is not None else agents.get(name, {}).get('about', catalog[role])}
+    if same_role and same_role[0] != name:
+        del agents[same_role[0]]
+    previous = same_role[1] if same_role else agents.get(name, {})
+    agents[name] = {"role": actual_role,
+                    "about": about if about is not None else previous.get("about", catalog[actual_role])}
     _save_agents(agents)
     return name
 
 
 def hide_agent(name: str) -> bool:
     agents = exposed_agents()
-    actual = _matching_name(name, agents)
-    if not actual:
+    matched = _agent_match(name, agents)
+    if not matched:
         return False
+    actual, _ = matched
     del agents[actual]
     _save_agents(agents)
     return True
@@ -175,7 +206,7 @@ def hide_conversation(name: str) -> bool:
 
 
 def _fresh_name(base: str) -> str:
-    names = [*_load(), *exposed_agents()]
+    names = [*_load(), *_agent_selectors()]
     n = 1
     while True:
         suffix = f" {n}"
@@ -188,9 +219,9 @@ def _fresh_name(base: str) -> str:
 def select(name: str) -> Chat:
     """An exposed agent always starts fresh; an exposed conversation resumes."""
     agents = exposed_agents()
-    agent_name = _matching_name(name, agents)
-    if agent_name:
-        spec = agents[agent_name]
+    matched = _agent_match(name, agents)
+    if matched:
+        agent_name, spec = matched
         if not roles.system_prompt(spec['role']):
             raise ValueError(f"Could not load instructions for agent '{agent_name}'. Check its roster role on the Mac.")
         chat = upsert(Chat(name=_fresh_name(agent_name), role=spec['role'], exposed=False))
@@ -226,7 +257,9 @@ def save_current(name: str) -> Chat:
 def role_listing() -> str:
     lines = ["Agents — start a new conversation"]
     for name, spec in sorted(exposed_agents().items(), key=lambda item: item[0].casefold()):
-        lines.append(f"• {name}" + _description(spec.get('about', '')))
+        role = str(spec["role"])
+        alias = f" ({role})" if role.casefold() != name.casefold() else ""
+        lines.append(f"• {name}{alias}" + _description(spec.get('about', '')))
     if len(lines) == 1:
         lines.append("None exposed yet.")
     return "\n".join(lines)

@@ -182,7 +182,7 @@ class ChatRoutingTests(unittest.TestCase):
         self.assertEqual(chats.get(first.name).session, "first-session")
         self.handle("chats")
         menu = self.replies[-1]
-        self.assertIn("Emma — Email help", menu)
+        self.assertIn("Emma (email) — Email help", menu)
         self.assertNotIn("coding", menu)
         self.assertNotIn("• " + first.name, menu)
         self.assertNotIn("• " + second.name, menu)
@@ -195,7 +195,7 @@ class ChatRoutingTests(unittest.TestCase):
         self.handle("talk " + first.name)
         self.assertEqual(chats.current(), "Inbox cleanup")
 
-    @patch("inbox.chats.roles.available", return_value={"email": "Mail"})
+    @patch("inbox.chats.roles.available", return_value={"email": "Mail", "logistics": "Messages"})
     def test_agent_and_conversation_names_cannot_collide(self, catalog):
         chats.expose_agent("email", "Emma")
         chats.upsert(chats.Chat(name="work", session="keep"))
@@ -206,10 +206,20 @@ class ChatRoutingTests(unittest.TestCase):
         self.assertEqual(chats.current(), "work")
         with self.assertRaises(ValueError):
             chats.expose_agent("email", "WORK")
+        with self.assertRaises(ValueError):
+            chats.expose_agent("logistics", "email")
         for command in ("add", "expose"):
-            with self.assertRaises(SystemExit):
-                cli.main(["chat", command, "Emma", "--session", "other"])
+            for reserved in ("Emma", "email"):
+                with self.assertRaises(SystemExit):
+                    cli.main(["chat", command, reserved, "--session", "other"])
         self.assertEqual(chats.get("work").session, "keep")
+
+    @patch("inbox.chats.roles.available", return_value={"email": "Mail"})
+    def test_reexposing_role_with_new_name_renames_one_entry(self, catalog):
+        chats.expose_agent("email", "Emma")
+        chats.expose_agent("EMAIL", "Mail helper")
+        self.assertEqual(list(chats.exposed_agents()), ["Mail helper"])
+        self.assertEqual(chats.exposed_agents()["Mail helper"]["role"], "email")
 
     @patch("inbox.chats.roles.available", return_value={"email": "Mail"})
     def test_hide_and_reexpose_preserve_conversations(self, catalog):
@@ -223,11 +233,50 @@ class ChatRoutingTests(unittest.TestCase):
         self.assertEqual(chats.get("Letters").session, "saved")
         self.handle("talk email")
         self.assertIn("No exposed agent", self.replies[-1])
-        with patch("builtins.print"), patch.dict("os.environ", {"CODEX_THREAD_ID": "unrelated"}):
+        with patch("builtins.print"), patch.dict("os.environ", {}, clear=True):
             cli.main(["chat", "expose", "Letters"])
         self.handle("talk letters")
         self.assertEqual(chats.current(), "Letters")
         self.assertEqual(chats.get("Letters").session, "saved")
+
+    @patch("inbox.chats.roles.available", return_value={"email": "Mail"})
+    @patch("inbox.chats.roles.system_prompt", return_value="Mail instructions")
+    def test_remote_agent_uses_name_and_role_alias_and_hides_by_either(self, prompt, catalog):
+        with patch("builtins.print") as output:
+            cli.main(["remote", "expose", "agent", "EMAIL", "--name", "Emma", "--about", "Email help"])
+        self.assertIn("talk Emma", output.call_args.args[0])
+        self.assertIn("talk email", output.call_args.args[0])
+        self.handle("talk Emma")
+        first = chats.current()
+        self.handle("talk email")
+        self.assertNotEqual(first, chats.current())
+        self.assertEqual(chats.get(chats.current()).role, "email")
+        with patch("builtins.print") as output:
+            cli.main(["remote", "hide", "agent", "EMAIL"])
+        self.assertEqual(output.call_args.args[0], "hidden")
+        self.handle("talk Emma")
+        self.assertIn("No exposed agent", self.replies[-1])
+
+    @patch.dict("os.environ", {"CODEX_THREAD_ID": "remote-thread"}, clear=True)
+    def test_remote_exposes_and_hides_current_conversation(self):
+        with patch("builtins.print"):
+            cli.main(["remote", "expose", "conversation", "Remote Design", "--cwd", "/tmp", "--about", "Design work"])
+        chat = chats.get("Remote Design")
+        self.assertEqual((chat.backend, chat.session, chat.cwd),
+                         ("codex", "remote-thread", str(Path("/tmp").resolve())))
+        with patch("builtins.print"):
+            cli.main(["remote", "list"])
+            cli.main(["remote", "hide", "conversation", "Remote Design"])
+        self.assertFalse(chats.get("Remote Design").exposed)
+        self.assertEqual(chats.get("Remote Design").session, "remote-thread")
+
+    def test_exposing_current_session_does_not_silently_keep_another_session(self):
+        chats.upsert(chats.Chat(name="Project notes", session="old-session", backend="codex", exposed=False))
+        with patch.dict("os.environ", {"CODEX_THREAD_ID": "new-session"}, clear=True), \
+             self.assertRaisesRegex(SystemExit, "already refers to another conversation"):
+            cli.main(["remote", "expose", "conversation", "Project notes"])
+        self.assertEqual(chats.get("Project notes").session, "old-session")
+        self.assertFalse(chats.get("Project notes").exposed)
 
     def test_menu_aliases_and_plain_sentences(self):
         for command in ("chats", "available", "available chats", "agents", "roles", "who", "talk"):

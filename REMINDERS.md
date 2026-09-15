@@ -104,7 +104,7 @@ current conversation automatically.
 session and reminder link. `done` closes the current conversation and its linked
 reminder; `snooze ID 2h` postpones the reminder. With no current conversation,
 the bot shows the menu. Exposing a reminder does not expose its role as a generic
-agent; use `inbox agent expose ROLE` for that. A future reminder notification
+agent; use `inbox remote expose agent ROLE` for that. A future reminder notification
 re-exposes its conversation if it was hidden.
 
 ## 5. A turn

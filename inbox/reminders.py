@@ -305,7 +305,7 @@ def ensure_chat(r: Reminder) -> None:
     c = next((c for c in chats.all_chats().values() if c.reminder == r.id), None)
     if c is None:
         name = r.id
-        if chats._matching_name(name, [*chats.all_chats(), *chats.exposed_agents()]):
+        if chats._matching_name(name, [*chats.all_chats(), *chats._agent_selectors()]):
             name = chats._fresh_name(name)
         c = chats.Chat(name=name)
     c.role, c.reminder, c.about = r.role, r.id, r.title

@@ -64,6 +64,12 @@ inbox remind add TEXT --due WHEN [--ref K:V]...       'fri 9am', 'tomorrow 18:30
 inbox remind list [--due-within 2d] | run [--dry-run] | done ID | snooze ID --until WHEN
 inbox remind install [--every 10]                     launchd timer on this Mac
 
+inbox remote list                                     what your phone can reach
+inbox remote expose agent ROLE [--name NAME]
+inbox remote expose conversation NAME [--backend B --session ID --cwd DIR]
+inbox remote hide agent NAME-OR-ROLE
+inbox remote hide conversation NAME
+
 inbox status | connectors | channel list | policy | log [--since 7d]
 ```
 
@@ -83,7 +89,7 @@ message. `allow_to = ["me"]` restricts a channel to named recipients. When
 policy says yes, inbox lifts the connector's own send guard for that one
 call.
 
-## Chats: agents and conversations on your phone
+## Remote access: agents and conversations on your phone
 
 Send `chats` for one menu with two blocks:
 
@@ -93,8 +99,10 @@ Send `chats` for one menu with two blocks:
 
 `talk NAME` selects an entry; your next message tells the agent what to do.
 Choosing an agent **always starts fresh**, even if you previously talked to
-that agent. Choosing a conversation continues its saved session. Agent and
-conversation names cannot overlap; names are matched without regard to case.
+that agent. Choosing a conversation continues its saved session. An agent is
+addressable by both its friendly name and its roster role: an exposed `Emma`
+with role `email` responds to both `talk Emma` and `talk email`. Agent names,
+role aliases and conversation names cannot overlap; matching ignores case.
 An exposed reminder or conversation with no session yet is marked “not started”.
 
 ```
@@ -115,22 +123,26 @@ always starts a new one. New conversations receive a temporary name such as
 retains their local session records. Saving preserves the history and reminder
 link and refuses to overwrite another saved name.
 
-### Exposing agents
+### Configuring remote access
 
-On the Mac, expose only the roles you want available on the phone:
+The `remote` command is the Mac-side configuration interface. Expose only the
+roles and conversations you want available on the phone:
 
 ```bash
-inbox agent list --all                          # roster roles you can choose from
-inbox agent expose email --name Emma --about "Email help"
-inbox agent expose logistics --about "Messages and coordination"
-inbox agent list                               # only exposed agents
-inbox agent hide Emma                           # stop offering fresh Emma chats
+roster list roles
+inbox remote expose agent email --name Emma --about "Email help"
+inbox remote expose agent logistics --about "Messages and coordination"
+inbox remote list
+inbox remote hide agent Emma                    # friendly name works
+inbox remote hide agent email                   # roster role works too
 ```
 
 `--name` and `--about` are optional. Agent exposure is stored in
 `~/.inbox/agents.toml`; no roster role is exposed by default. Instructions
 come from the installed prompt when available, otherwise the roster definition.
-Hiding an agent leaves its saved conversations usable.
+Hiding an agent leaves its saved conversations usable. Re-exposing a role with
+a new friendly name renames that one remote entry rather than creating a second
+entry for the same role.
 
 ### Exposing conversations
 
@@ -138,7 +150,7 @@ On the phone, `save NAME` exposes the current conversation. From an existing
 agent session on the Mac, run:
 
 ```bash
-inbox chat expose "Inbox Chat" --about "Telegram and reminder design"
+inbox remote expose conversation "Inbox Chat" --about "Telegram and reminder design"
 ```
 
 Inbox detects `CODEX_THREAD_ID` or `CLAUDE_SESSION_ID` and records the working
@@ -148,16 +160,17 @@ folder. You can also ask the agent in the desired conversation to expose it
 under a short name. IDs never need to be typed on the phone.
 
 ```bash
-inbox chat hide "Inbox Chat"        # hide from the menu, retain the session
-inbox chat expose "Inbox Chat"      # re-expose that stored conversation
-inbox chat list                     # preview the phone menu locally
+inbox remote hide conversation "Inbox Chat"    # hide, retain the session
+inbox remote expose conversation "Inbox Chat"  # re-expose the stored session
+inbox remote list                               # preview the phone menu locally
 ```
 
 Names and session IDs live in `~/.inbox/chats.toml`. Existing saved entries
 remain exposed. Exposing refuses to replace a different session under an
 existing name. Reminder notifications re-expose their linked conversation.
-`inbox chat add NAME` remains available for manually registering a conversation;
-`inbox chat remove NAME` removes its registration without deleting backend history.
+The older `inbox agent` and `inbox chat` commands remain as compatibility and
+terminal-operation commands. `inbox chat remove NAME` removes an Inbox
+registration without deleting the backend's conversation history.
 
 Every message starts a new CLI process which resumes the saved conversation.
 Claude role chats still use Claude; exposed Codex conversations use

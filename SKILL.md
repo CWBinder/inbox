@@ -48,6 +48,20 @@ Sending mail, trashing mail and deleting drafts are refused by the usual
 policy; report that rather than looking for another route. When the person
 approves a draft, hand them the client command to send it themselves.
 
+## Remote phone access
+
+`remote` controls which fresh agents and resumable conversations are visible
+through the person's configured phone channel. A friendly agent name and its
+roster role are equivalent selectors.
+
+```text
+inbox remote list
+inbox remote expose agent ROLE [--name NAME] [--about TEXT]
+inbox remote expose conversation NAME [--backend codex|claude --session ID --cwd DIR]
+inbox remote hide agent NAME-OR-ROLE
+inbox remote hide conversation NAME
+```
+
 ## Refs on reminders
 
 `--ref` takes kind-prefixed text: `ws:task:<key>`, `email:<channel>:<id>`,
