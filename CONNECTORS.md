@@ -9,6 +9,59 @@ Two existing connectors are the reference: the [whatsapp](../whatsapp) and
 [gmail](../gmail) clients. `inbox connectors --check NAME` runs this contract
 against an installed connector and reports what is missing.
 
+## Install a connector, then register a channel
+
+These are two separate operations:
+
+1. **Install the connector CLI.** Its executable must be on `PATH`.
+2. **Register a channel in Inbox.** A channel gives one connector account a
+   short local name.
+
+For a connector whose executable is named `matrix`:
+
+```bash
+# Ask the connector which accounts are available.
+matrix accounts
+
+# Verify that Inbox can run it and understands its protocol.
+inbox connectors --check matrix
+
+# Register the connector account as an Inbox channel.
+inbox channel add matrix-personal \
+  --connector matrix \
+  --account default \
+  --default
+```
+
+Inbox automatically looks for an executable with the same name as the
+connector. If the executable has a different name, add the command mapping to
+`~/.inbox/config.toml`:
+
+```toml
+[connectors.matrix]
+command = "matrix-cli"
+alias = "mx"
+```
+
+Then register the channel with `--connector matrix` as above.
+
+The names have distinct purposes:
+
+- `matrix` is the connector type and normally the executable name.
+- `default` is an account reported by that connector.
+- `matrix-personal` is the name you choose for using that account through
+  Inbox.
+
+After registration, shared Inbox commands refer to the channel name:
+
+```bash
+inbox search "project update" --via matrix-personal
+inbox send alice --via matrix-personal --body "Hello" --confirmed
+```
+
+`inbox channel add` does not install software or sign in to a service. It only
+writes the connector/account binding to Inbox's configuration.
+
 ## Accounts
 
 A connector may serve several accounts (mailboxes, linked numbers). It names

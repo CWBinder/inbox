@@ -101,11 +101,14 @@ The notification tells you which name to select. It does not change your
 current conversation automatically.
 
 `save NAME` names and exposes the current conversation while preserving its
-session and reminder link. `done` closes the current conversation and its linked
-reminder; `snooze ID 2h` postpones the reminder. With no current conversation,
-the bot shows the menu. Exposing a reminder does not expose its role as a generic
-agent; use `inbox remote expose agent ROLE` for that. A future reminder notification
-re-exposes its conversation if it was hidden.
+session and reminder link. `leave` or `leave NAME` stops routing new messages
+there while keeping the conversation exposed. `remove NAME` removes its Inbox
+mapping but does not complete the reminder; `snooze ID 2h` postpones it. A
+reminder can still be completed from the Mac with `inbox remind done ID`. With
+no current conversation, the bot shows the menu. Exposing a reminder does not
+expose its role as a generic agent; use `inbox remote expose agent ROLE` for
+that. A future reminder notification re-exposes its conversation if removed or
+hidden.
 
 ## 5. A turn
 

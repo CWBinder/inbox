@@ -22,18 +22,45 @@ The full walk from an empty machine, connectors and sign-in included, is
 [GETTING-STARTED.md](GETTING-STARTED.md). In short:
 
 ```bash
-uv tool install -e .
+git clone https://github.com/CWBinder/inbox.git ~/Projects/inbox
+cd ~/Projects/inbox
+python3 install.py
 inbox init                    # writes ~/.inbox/config.toml and policy.toml from the examples
 ```
 
-Install the connectors you want on PATH: the [gmail](../gmail) client, the
-[whatsapp](../whatsapp) client. Then declare your channels, one per account:
+The installer creates `.venv/` inside this checkout, installs Inbox there in
+editable mode, and links `~/.local/bin/inbox` to `.venv/bin/inbox`. You do not
+activate the environment for normal use. Keep the checkout in place; the
+installed command uses its source code. If `~/.local/bin` is not on `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell configuration.
+
+Install the connector CLIs you want on `PATH`: for example [gmail](../gmail),
+[whatsapp](../whatsapp), and [telegram](../telegram). A connector is the
+software; an account is one login or bot known to that software; a channel is
+your Inbox name for one connector account:
+
+```text
+work  → gmail connector → work account
+me    → whatsapp connector → default account
+bot   → telegram connector → assistant account
+```
+
+There is no separate connector-registration command. Once its executable is on
+`PATH`, verify the contract and add a channel for one account it reports:
 
 ```bash
+gmail accounts
+inbox connectors --check gmail
 inbox channel add work --connector gmail --account work --default
+
+whatsapp accounts
 inbox channel add me   --connector whatsapp --account default --default --address 4412345678
 inbox status                  # every channel checked through its connector
 ```
+
+`--default` means that channel may be used when `--via` is omitted for that
+connector. `--address` is your own address on that service, needed when the
+channel name itself (such as `me`) is used as a recipient.
 
 ## Vocabulary
 
@@ -109,12 +136,19 @@ An exposed reminder or conversation with no session yet is marked “not started
 chats            agents and conversations in two blocks
 talk NAME       select an agent or conversation, then send your message
 save NAME        name and expose the current conversation for later
-done             close the current conversation and its linked reminder
+leave [NAME]     stop routing messages; keep the conversation exposed
+remove NAME      remove its Inbox mapping; keep backend history intact
 anything else    a prompt for the current conversation
 ```
 
 `available`, `available chats`, `agents`, `roles`, and `who` are aliases for
 `chats`. `new NAME` creates a generic conversation without an agent role.
+`leave` clears the current selection; `leave NAME` does the same only when
+NAME is currently selected. It does not hide, remove or complete anything.
+`remove NAME` explicitly removes that conversation from Inbox and clears the
+selection when necessary. It does not delete Claude or Codex history or mark
+a linked reminder complete. The retired exact command `done` explains these
+choices instead of changing state.
 
 For example: `talk librarian`, discuss a paper, then `save Readout papers`.
 Later, `talk Readout papers` continues that conversation. `talk librarian`
@@ -196,4 +230,4 @@ inbox remind say ID TEXT                      one turn with its chat, from the t
 inbox remind run [--dry-run] | install [--every 10]
 ```
 
-Private. `~/.inbox` never goes into a public repository.
+Local data stays private. `~/.inbox` never goes into the repository.

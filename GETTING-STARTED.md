@@ -1,16 +1,25 @@
 # Getting started
 
-From an empty machine to `inbox recent` in five steps. Needs Python 3.11 or
-newer and [uv](https://docs.astral.sh/uv/); WhatsApp additionally needs Go,
-Gmail needs Node.
+From an empty machine to `inbox recent` in five steps. Inbox needs Git and
+Python 3.11 or newer, including Python's `venv` support. WhatsApp additionally
+needs Go and Gmail needs Node. Connectors are separate projects and may have
+their own installation requirements. Their examples below use each connector's
+current project-specific installer; Inbox itself does not depend on `uv`.
 
 ## 1. Install inbox
 
 ```bash
-git clone https://github.com/<you>/inbox ~/Projects/inbox
-uv tool install -e ~/Projects/inbox
+git clone https://github.com/CWBinder/inbox.git ~/Projects/inbox
+cd ~/Projects/inbox
+python3 install.py
 inbox init
 ```
+
+The installer creates `~/Projects/inbox/.venv`, installs Inbox into it in
+editable mode, and links `~/.local/bin/inbox` to its command. You do not need
+to activate the environment. If `inbox` is not found, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell configuration and open a
+new terminal.
 
 `init` writes `~/.inbox/config.toml` and `~/.inbox/policy.toml` from the
 examples. `inbox status` now runs and reports no channels. That is expected.
@@ -65,13 +74,29 @@ telegram contacts            # shows your chat id; put it in config.toml as `me 
 telegram accounts            # ok: claude   @yourbot
 ```
 
-Either way, the test is the same: `<client> accounts` lists at least one
+In every case, the test is the same: `<client> accounts` lists at least one
 account and says ok.
 
 ## 3. Declare your channels
 
-A channel is your name for one account of one connector. The connector name
-is the command's name; the account name is what `<client> accounts` printed.
+This is the only registration step inside Inbox. Keep these three things
+separate:
+
+```text
+connector   installed program that knows how to speak to a service
+account     one login, profile or bot configured inside that program
+channel     your Inbox name for one connector + account pair
+```
+
+For example, suppose the connector commands report:
+
+```text
+whatsapp accounts  → account: default
+gmail accounts     → account: default
+telegram accounts  → account: claude
+```
+
+Create one channel for each account you want Inbox to use:
 
 ```bash
 inbox channel add me   --connector whatsapp --account default --default --address 4412345678
@@ -80,10 +105,38 @@ inbox channel add claude --connector telegram --account claude      # reminders 
 inbox status
 ```
 
-`status` asks every connector about every channel. When every line says ok,
-you are done. `--default` marks the channel used when `--via` is omitted for
-that connector; `--address` is your own number, so that `me` works as a
-recipient and reminders know where to go.
+These commands write mappings equivalent to:
+
+```toml
+[channels.me]
+connector = "whatsapp"
+account = "default"
+default = true
+address = "4412345678"
+
+[channels.work]
+connector = "gmail"
+account = "default"
+default = true
+```
+
+There is no separate `connector add`: using a connector in a channel makes it
+known to Inbox. By default its connector name is also its executable name, so
+`connector = "gmail"` means Inbox runs the `gmail` command on `PATH`.
+
+`--default` applies within one connector. It lets `inbox email search ...` use
+`work` when `--via work` is omitted. `--address` records your own address on
+that service, allowing the channel name itself (`me`) to be resolved as a
+recipient. `status` asks every connector about every declared account; when
+every line says `ok`, setup is complete.
+
+You now use the channel name with the shared commands:
+
+```bash
+inbox search "invoice" --via work
+inbox send Jane --via me --body "On my way" --confirmed
+inbox draft jane@example.org --via work --subject Hi --body "..."
+```
 
 ## 4. Decide what may be sent
 
@@ -121,5 +174,36 @@ connector's own commands with the account chosen for you.
 ## Adding a service nobody has written a client for
 
 Write a command that speaks [CONNECTORS.md](CONNECTORS.md): six verbs, one
-JSON record, an account selector. Put it on PATH, run `inbox connectors
---check <name>` until it passes, add a channel. inbox needs no change.
+JSON record, an account selector. If the new executable is called `matrix`:
+
+```bash
+matrix accounts
+inbox connectors --check matrix
+inbox channel add matrix-personal --connector matrix --account default --default
+inbox status
+```
+
+Inbox now knows `matrix` because the `matrix-personal` channel uses it. If the
+executable has a different name, or you want a short pass-through alias, add a
+connector block to `~/.inbox/config.toml` before adding the channel:
+
+```toml
+[connectors.matrix]
+command = "matrix-cli"
+alias = "mx"
+```
+
+Then `inbox matrix ...` and `inbox mx ...` both run `matrix-cli` with the
+account selected by `--via`. Inbox itself needs no service-specific code.
+
+## Updating Inbox
+
+Keep the checkout in place. To update the code and rebuild its local
+environment:
+
+```bash
+cd ~/Projects/inbox
+git pull --ff-only
+python3 install.py
+inbox status
+```

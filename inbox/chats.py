@@ -3,6 +3,8 @@
 `chats` shows agents (always start fresh) and conversations (resume).
 Fresh conversations stay out of the catalog until `save NAME`; reminders
 expose their own conversation when announced. One conversation is current.
+`leave` clears that selection without changing the catalog; `remove NAME`
+explicitly removes a conversation from it.
 """
 import json
 import re
@@ -282,7 +284,13 @@ def listing() -> str:
         lines.append(f"• {c.name}{mark}{ready}" + _description(c.about))
     if not chats:
         lines.append("None exposed yet.")
-    lines += ["", "talk NAME → select, then send your message.", "save NAME → keep the current conversation in this list."]
+    lines += [
+        "",
+        "talk NAME → select, then send your message.",
+        "save NAME → keep the current conversation in this list.",
+        "leave [NAME] → stop routing messages; keep it in this list.",
+        "remove NAME → remove it from this list; keep backend history.",
+    ]
     active = get(cur) if cur else None
     if active and not active.exposed:
         lines.append(f"Current: {cur} (not saved to this list).")
@@ -351,7 +359,10 @@ def turn(chat: Chat, prompt: str, dry_run: bool = False) -> tuple[bool, str]:
 
 # ---- the phone protocol -----------------------------------------------------------
 
-_CMD = re.compile(r"^\s*(?:(roles|agents|chats|available|available chats|done|who)|(talk|save|new)(?:[ \t]+([^\r\n]+?))?)\s*$", re.I)
+_CMD = re.compile(
+    r"^\s*(?:(roles|agents|chats|available|available chats|done|who)|"
+    r"(talk|save|new|leave|remove)(?:[ \t]+([^\r\n]+?))?)\s*$", re.I
+)
 
 
 def handle(text: str, tell, dry_run: bool = False) -> str:
@@ -389,20 +400,33 @@ def handle(text: str, tell, dry_run: bool = False) -> str:
                 tell(f"[{arg}] exists; say 'talk {arg}'."); return f"new: exists {arg}"
             upsert(Chat(name=arg, exposed=False)); set_current(arg)
             tell(f"[{arg}] new chat. What should I do?"); return f"new {arg}"
-        if cmd == "done":
+        if cmd == "leave":
             cur = current()
             if not cur:
-                tell("No current chat."); return "done: none"
-            c = get(cur)
-            closed = ""
-            if c and c.reminder:
-                from . import reminders
-                try:
-                    reminders.mark_done(c.reminder); closed = f"; reminder {c.reminder} closed"
-                except SystemExit:
-                    pass
-            remove(cur)
-            tell(f"[{cur}] done{closed}. " + listing()); return f"done {cur}"
+                tell("No conversation is selected. Say 'chats' to see what is available.")
+                return "leave: none"
+            if arg and arg.casefold() != cur.casefold():
+                tell(f"[{cur}] is selected, so '{arg}' was not left. Say 'leave' or 'leave {cur}'.")
+                return f"leave: wrong name {arg}"
+            set_current(None)
+            tell(f"[{cur}] left. It remains in chats; return with 'talk {cur}'.")
+            return f"left {cur}"
+        if cmd == "remove":
+            if not arg:
+                tell("Say 'remove NAME'. This removes the conversation from chats but does not delete its Claude or Codex history.")
+                return "remove: missing name"
+            actual = _matching_name(arg, _load())
+            if not actual:
+                tell(f"No conversation named '{arg}'. Say 'chats' to see exposed conversations.")
+                return f"remove: unavailable {arg}"
+            c = get(actual)
+            reminder_note = " Its reminder remains open." if c and c.reminder else ""
+            remove(actual)
+            tell(f"[{actual}] removed from chats. Its underlying session was not deleted.{reminder_note}")
+            return f"removed {actual}"
+        if cmd == "done":
+            tell("'done' is no longer a command. Say 'leave' to stop routing messages, or 'remove NAME' to remove a conversation from chats.")
+            return "done: retired"
     cur = current()
     if not cur or not get(cur):
         tell("No current chat. " + listing()); return "prompt without a chat"

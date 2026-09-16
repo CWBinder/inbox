@@ -90,7 +90,7 @@ class ChatRoutingTests(unittest.TestCase):
             self.assertEqual(chats.get("a").session, "one")
             self.assertEqual(chats.get("b").session, "two")
 
-    def test_saved_reminder_stays_linked_on_announcement_and_done(self):
+    def test_saved_reminder_stays_linked_when_left_or_removed(self):
         r = reminders.add("Pay fee", when.parse("in 1h"), [], role="logistics")
         reminders.ensure_chat(r)
         chats.select(r.id)
@@ -101,9 +101,56 @@ class ChatRoutingTests(unittest.TestCase):
         with patch("inbox.chats.turn", return_value=(True, "Checked")), patch("inbox.reminders.tell"):
             reminders.converse(r, "Check it")
         self.assertEqual(chats.current(), "conference")
-        self.handle("done")
-        self.assertEqual(reminders.get(r.id).status, "done")
+        self.handle("leave conference")
+        self.assertIsNone(chats.current())
+        self.assertIsNotNone(chats.get("conference"))
+        self.assertNotEqual(reminders.get(r.id).status, "done")
+        self.handle("talk conference")
+        self.handle("remove conference")
         self.assertIsNone(chats.get("conference"))
+        self.assertIsNone(chats.current())
+        self.assertNotEqual(reminders.get(r.id).status, "done")
+
+    def test_leave_preserves_exposed_conversation_and_session(self):
+        chats.upsert(chats.Chat(name="Inbox Chat", session="session-1", backend="codex"))
+        chats.set_current("Inbox Chat")
+        self.handle("leave")
+        self.assertIsNone(chats.current())
+        self.assertEqual(chats.get("Inbox Chat").session, "session-1")
+        self.assertTrue(chats.get("Inbox Chat").exposed)
+        self.assertIn("remains in chats", self.replies[-1])
+
+    def test_leave_optional_name_must_match_current_conversation(self):
+        chats.upsert(chats.Chat(name="Inbox Chat", session="session-1"))
+        chats.upsert(chats.Chat(name="Other", session="session-2"))
+        chats.set_current("Inbox Chat")
+        self.handle("leave Other")
+        self.assertEqual(chats.current(), "Inbox Chat")
+        self.handle("leave inbox chat")
+        self.assertIsNone(chats.current())
+        self.assertIsNotNone(chats.get("Inbox Chat"))
+        self.assertIsNotNone(chats.get("Other"))
+
+    def test_remove_requires_name_and_only_removes_named_conversation(self):
+        chats.upsert(chats.Chat(name="Keep", session="session-1"))
+        chats.upsert(chats.Chat(name="Remove Me", session="session-2"))
+        chats.set_current("Keep")
+        self.handle("remove")
+        self.assertIn("remove NAME", self.replies[-1])
+        self.assertIsNotNone(chats.get("Remove Me"))
+        self.handle("remove remove me")
+        self.assertIsNone(chats.get("Remove Me"))
+        self.assertEqual(chats.current(), "Keep")
+
+    def test_retired_done_command_does_not_route_or_remove(self):
+        chats.upsert(chats.Chat(name="Inbox Chat", session="session-1"))
+        chats.set_current("Inbox Chat")
+        with patch("inbox.chats.turn") as turn:
+            self.handle("done")
+        turn.assert_not_called()
+        self.assertEqual(chats.current(), "Inbox Chat")
+        self.assertIsNotNone(chats.get("Inbox Chat"))
+        self.assertIn("leave", self.replies[-1])
 
     @patch("inbox.chats.roles.available", side_effect=roles.RoleError("Roster unavailable"))
     def test_listing_works_without_roster_and_exposure_reports_failure(self, catalog):
