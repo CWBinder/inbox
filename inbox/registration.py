@@ -78,9 +78,9 @@ def register(executable, reserved=()):
     if name in reserved:
         raise RegistrationError(f"connector name '{name}' conflicts with an Inbox command or connector alias")
     verbs = caps.get('verbs')
-    required = {'accounts', 'search', 'read', 'send', 'resolve'}
+    required = {'accounts', 'threads', 'search', 'read', 'send', 'resolve'}
     if not isinstance(verbs, list) or not all(isinstance(v, str) for v in verbs) or not required.issubset(verbs):
-        raise RegistrationError('capabilities must advertise accounts, search, read, send, and resolve')
+        raise RegistrationError('capabilities must advertise accounts, threads, search, read, send, and resolve')
     flag = caps.get('account_flag')
     if not isinstance(flag, str) or not re.fullmatch(r'--[a-zA-Z][a-zA-Z0-9-]*', flag):
         raise RegistrationError('capabilities must advertise an account_flag such as --account')

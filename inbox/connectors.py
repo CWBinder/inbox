@@ -108,7 +108,7 @@ def check(connector: str) -> list[tuple[str, str]]:
     except ConnectorError as e:
         return [("capabilities", f"FAIL {e}")]
     rows.append(("capabilities", "ok"))
-    for verb in ("accounts", "search", "read", "send", "resolve"):
+    for verb in ("accounts", "threads", "search", "read", "send", "resolve"):
         rows.append((verb, "ok" if verb in caps.get("verbs", []) else "MISSING"))
     chs = config.channels_of(connector)
     if chs:
@@ -123,6 +123,13 @@ def check(connector: str) -> list[tuple[str, str]]:
             rows.append(("search record", "ok" if not missing else f"missing keys: {', '.join(missing)}"))
         else:
             rows.append(("search --json", f"FAIL {err[:80]}"))
+        ok, thread_rows, err, _ = run(chs[0], "threads", "-n", "1")
+        required = ("id", "account", "name", "type", "participants", "when", "snippet", "message_count")
+        if ok and isinstance(thread_rows, list):
+            missing = [key for key in required if thread_rows and key not in thread_rows[0]]
+            rows.append(("thread record", "ok" if not missing else f"missing keys: {', '.join(missing)}"))
+        else:
+            rows.append(("threads --json", f"FAIL {err[:80]}"))
     else:
         rows.append(("channels", "none declared"))
     return rows

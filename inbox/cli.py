@@ -237,12 +237,35 @@ def _note(e, explicit: bool):
 def cmd_search(a):
     rows = []
     for ch in _channels_for(a.via):
-        args = ([a.query] if a.query else []) + ["-n", str(a.max)] + (["--since", a.since] if a.since else [])
+        args = ([a.query] if a.query else []) + ["-n", str(a.max)]
+        args += (["--thread", a.thread_id] if a.thread_id else [])
+        args += (["--from", a.sender] if a.sender else [])
+        args += (["--since", a.since] if a.since else [])
+        args += (["--native"] if a.native else [])
         try:
             rows += connectors.records(ch, "search", *args)
         except connectors.ConnectorError as e:
             _note(e, bool(a.via))
     _print_records(rows, a.json)
+
+
+def cmd_threads(a):
+    rows = []
+    for ch in _channels_for(a.via):
+        args = ([a.query] if a.query else []) + ["-n", str(a.max)]
+        args += (["--from", a.sender] if a.sender else [])
+        args += (["--since", a.since] if a.since else [])
+        try:
+            rows += connectors.records(ch, "threads", *args)
+        except connectors.ConnectorError as e:
+            _note(e, bool(a.via))
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2)); return
+    if not rows:
+        print("nothing"); return
+    for row in sorted(rows, key=lambda item: item.get("when", ""), reverse=True):
+        print(f"{row.get('when', '')[:16]:16}  {row.get('channel', ''):<20}  "
+              f"{row.get('name', '')[:40]:40}  {row.get('snippet', '')[:55]}  <{row.get('id', '')}>")
 
 
 def cmd_recent(a):
@@ -261,11 +284,24 @@ def cmd_recent(a):
 
 def cmd_read(a):
     """A message id needs --via; a person's name is read across channels."""
+    if a.message_id or a.thread_id:
+        names = [name.strip() for name in (a.via or "").split(",") if name.strip()]
+        if len(names) != 1:
+            raise SystemExit("--message and --thread require exactly one --via CHANNEL")
+        ch = config.channel(names[0])
+        selector = ["--message", a.message_id] if a.message_id else ["--thread", a.thread_id]
+        if a.max is not None:
+            selector += ["-n", str(a.max)]
+        rows = connectors.records(ch, "read", *selector)
+        _print_records(rows, a.json); return
+    if not a.what:
+        raise SystemExit("say what to read: --message ID, --thread ID, or a person")
     if a.via and _looks_like(a.what) is None and len(a.what) > 12 and a.what.isalnum():
         ch = config.channel(a.via)
-        rows = connectors.records(ch, "read", a.what, *(["--thread"] if a.thread else []))
+        rows = connectors.records(ch, "read", "--message", a.what)
         _print_records(rows, a.json); return
     rows = []
+    limit = a.max if a.max is not None else 20
     for ch in _channels_for(a.via):
         feats = connectors.capabilities(ch.connector).get("features", {})
         try:
@@ -273,9 +309,10 @@ def cmd_read(a):
             if not res:
                 continue
             if feats.get("subject"):
-                rows += connectors.records(ch, "search", f"from:{res['address']} OR to:{res['address']}", "-n", str(a.max))
+                rows += connectors.records(ch, "search", f"from:{res['address']} OR to:{res['address']}",
+                                           "--native", "-n", str(limit))
             else:
-                rows += connectors.records(ch, "read", a.what, "-n", str(a.max))
+                rows += connectors.records(ch, "read", a.what, "-n", str(limit))
         except connectors.ConnectorError as e:
             _note(e, bool(a.via))
     _print_records(rows, a.json)
@@ -614,11 +651,14 @@ recipients: a channel name (me), a raw address (x@y.org, 4366...), or a contact 
 examples:
   inbox recent --since 24h --incoming            everything that came in, all channels
   inbox connector add gmail                      discover and register gmail accounts
+  inbox threads finance --via slack.qmt              find readable threads
   inbox search invoice --via gmail.work,gmail.personal
+  inbox read --message ID --via gmail.work
+  inbox read --thread ID --via gmail.work
   inbox read BJ                                  one person, across channels
   inbox send BJ --body "See you Saturday" --confirmed
   inbox draft x@y.org --via gmail.work --subject Hi --body "..."
-  inbox gmail --via gmail.work search "is:unread"   a connector's own commands
+  inbox gmail --via gmail.work search "is:unread" --native
   inbox remind add pay the fee --due fri 9am --ref url:https://...""")
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -643,12 +683,21 @@ examples:
 
     s = sub.add_parser("search", help="messages matching a query, across channels"); s.add_argument("query", nargs="?")
     s.add_argument("--via", help="channel or comma list; default all"); s.add_argument("--since"); s.add_argument("-n", "--max", type=int, default=10)
+    s.add_argument("--thread", dest="thread_id", help="restrict to one thread id")
+    s.add_argument("--from", dest="sender", help="restrict to one sender")
+    s.add_argument("--native", action="store_true", help="use the connector's native advanced query syntax")
     s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_search)
+    s = sub.add_parser("threads", help="find readable message threads across channels"); s.add_argument("query", nargs="?")
+    s.add_argument("--via", help="channel or comma list; default all"); s.add_argument("--since"); s.add_argument("-n", "--max", type=int, default=20)
+    s.add_argument("--from", dest="sender", help="restrict to one participant where supported")
+    s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_threads)
     s = sub.add_parser("recent", help="what came in lately, merged by time"); s.add_argument("--since", default="24h")
     s.add_argument("--via"); s.add_argument("-n", "--max", type=int, default=30); s.add_argument("--unread", action="store_true")
     s.add_argument("--incoming", action="store_true", help="hide your own messages"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_recent)
-    s = sub.add_parser("read", help="one person across channels, or one message id with --via"); s.add_argument("what")
-    s.add_argument("--via"); s.add_argument("--thread", action="store_true"); s.add_argument("-n", "--max", type=int, default=20)
+    s = sub.add_parser("read", help="one message, one complete thread, or a person across channels"); s.add_argument("what", nargs="?")
+    s.add_argument("--via"); choice = s.add_mutually_exclusive_group()
+    choice.add_argument("--message", dest="message_id"); choice.add_argument("--thread", dest="thread_id")
+    s.add_argument("-n", "--max", type=int, help="limit a thread read; omitted means the complete thread")
     s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_read)
     s = sub.add_parser("resolve", help="which channel and address a recipient resolves to"); s.add_argument("who"); s.add_argument("--via"); s.set_defaults(func=cmd_resolve)
 
@@ -738,7 +787,7 @@ examples:
     except config.ConfigError:
         pass
     # Built-in command names are always reserved, even in a malformed config.
-    reserved.update(('init', 'status', 'connectors', 'connector', 'channel', 'search', 'recent',
+    reserved.update(('init', 'status', 'connectors', 'connector', 'channel', 'threads', 'search', 'recent',
                      'read', 'resolve', 'send', 'draft', 'remind', 'remote', 'chat', 'agent', 'policy', 'log'))
     p.set_defaults(reserved=reserved)
     return p

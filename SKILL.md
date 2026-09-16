@@ -28,18 +28,23 @@ names remain supported; their policies are inherited by canonical names.
 ```text
 inbox status                                  every channel and connector in one check
 inbox recent [--since 24h] [--incoming]       what came in, all channels merged by time
-inbox search QUERY [--via gmail.work,gmail.personal] [-n 20]   the service's own query syntax
+inbox threads [QUERY] [--via CHANNEL]          find readable email chains, chats and channels
+inbox search QUERY [--via CHANNEL] [--thread ID] [--from WHO] [-n 20]
 inbox read WHO [-n 30]                        one person across channels
-inbox read ID --via CHANNEL [--thread]        one message
+inbox read --message ID --via CHANNEL         one exact message
+inbox read --thread ID --via CHANNEL          one complete thread
 inbox resolve WHO                             which channel and address a name maps to
 inbox whatsapp read WHO | inbox whatsapp recent | inbox whatsapp download ID
-inbox gmail read ID --thread | inbox gmail attachments ID --save DIR
+inbox gmail read --thread ID | inbox gmail attachments ID --save DIR
 inbox remind list [--due-within 2d]           reminders plus due ws tasks
 inbox log [--since 7d]                        what was sent, drafted, saved or refused
 ```
 
-Pass-through groups take `--via CHANNEL` first: `inbox gmail --via gmail.work search "is:unread"`.
+Pass-through groups take `--via CHANNEL` first: `inbox gmail --via gmail.work search "is:unread" --native`.
 Without it the connector's default channel is used. Name the channel in every report.
+Message and thread ids are opaque and scoped by channel. Pass them back unchanged.
+Use `--native` only when the person intends the connector's service-specific
+advanced search syntax.
 
 ## Acting
 

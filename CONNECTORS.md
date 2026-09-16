@@ -86,19 +86,49 @@ Every verb accepts `--json`. Without it the connector prints for humans.
 capabilities                                  -> {connector, version, account_flag, account_position?,
                                                   verbs, optional, features, address}
 accounts [--json]                             -> [{name, address, ok, default?, error?}]
-search [QUERY] [--since T] [-n N] <acct>      -> [record]      QUERY in the service's own syntax
-read ID [--thread] <acct>                     -> [record]      the message, or its whole thread
+threads [QUERY] [--from A] [--since T] [-n N] <acct>
+                                              -> [thread-record]
+search [QUERY] [--thread ID] [--from A] [--since T] [-n N] [--native] <acct>
+                                              -> [message-record]
+read (--message ID | --thread ID) [-n N] <acct>
+                                              -> [message-record]
 send WHO [--body TEXT] [--reply-to ID] [--attach FILE] <acct>
                                               -> {ok, id?, thread?, to, account} or {ok:false, reason}
 resolve WHO <acct>                            -> {ok, address, name?, candidates:[{address,name}]}
                                                  or exit 2 with {ok:false, reason, candidates}
 ```
 
-`--since` takes `24h`, `7d`, `30m` or an ISO date. `--body` omitted means
-read stdin. `--reply-to` threads or quotes where the service can, and is
-ignored where it cannot. `--attach` on a service that cannot attach exits 2.
+`--since` takes `24h`, `7d`, `30m` or an ISO date. A bare search query matches
+human-visible message content: subject and body for mail, text and captions for
+chat. Matching may use the service's index, so tokenization can differ. `--native`
+explicitly enables advanced service syntax such as Gmail operators. `--thread`
+and `--from` are common scope filters.
 
-## The message record
+`--body` omitted means read stdin. `--reply-to` takes a self-contained message
+ID and threads or quotes where the service can. `--attach` on a service that
+cannot attach exits 2.
+
+## Thread records
+
+`threads` discovers independently readable message collections:
+
+```json
+{"id": "…", "account": "qmt", "name": "#finance", "type": "channel",
+ "participants": ["alice"], "when": "2026-09-11T14:09:00+01:00",
+ "snippet": "Latest visible message", "message_count": 42}
+```
+
+Required keys are `id`, `account`, `name`, `type`, `participants`, `when`,
+`snippet`, and `message_count`. Values unavailable to a service are an empty
+string/list or `null`. Types include `email`, `direct`, `group`, `channel`, and
+service-specific additions. A thread ID must be accepted unchanged by
+`read --thread` and `search --thread`.
+
+`threads QUERY` helps discover the ID: it matches a display name, title,
+participants, or indexed message content according to what the service can
+search. Once an ID is known, `search --thread ID` has exact scope.
+
+## Message records
 
 The same keys from every connector, so a merged view is a sort, not a
 translation:
@@ -112,11 +142,19 @@ translation:
 
 - `from` and `to` are canonical addresses (see below); `from` is `"me"` for
   the person's own messages.
+- `id` is opaque but self-contained and identifies exactly one message within
+  its connector account. If a native message ID is only unique inside a chat,
+  the connector returns a composite ID.
 - `subject` is empty on services without one. `unread` is `null` where the
   service does not track it.
-- `thread` is a thread id for mail and the chat id for chat. Chat connectors
-  add `thread_name` and `group`.
+- `thread` identifies the independently readable collection containing the
+  message: an email chain, chat, channel, or service reply thread. It is opaque
+  and accepted unchanged by `read --thread`. Chat connectors may add
+  `thread_name` and `group`.
 - `text` in search results may be a snippet; `read` returns the full text.
+
+`read --thread ID` returns the complete thread in chronological order. An
+explicit `-n N` may limit it to the newest N messages.
 
 ## Addresses
 

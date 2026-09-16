@@ -80,9 +80,11 @@ names. `inbox channel add` remains available for manual configuration.
 
 ```
 inbox recent [--since 24h] [--incoming] [--via a,b]   what came in, all channels merged by time
-inbox search QUERY [--via a,b] [--since] [-n]         the service's own query syntax
+inbox threads [QUERY] [--via a,b] [--from] [--since]  find readable email chains, chats and channels
+inbox search QUERY [--via a,b] [--thread] [--from]    find messages; bare text searches visible content
 inbox read WHO [-n 30]                                one person across channels
-inbox read ID --via CHANNEL [--thread]                one message
+inbox read --message ID --via CHANNEL                 one exact message
+inbox read --thread ID --via CHANNEL                  one complete thread
 inbox resolve WHO                                     which channel and address a recipient maps to
 
 inbox send WHO [--via CH] --body TEXT [--reply-to ID] [--attach FILE] [--confirmed] [connector flags]
@@ -110,6 +112,15 @@ or a contact name, which is asked of each connector's `resolve`. An email
 address goes by mail, a number by chat, on that connector's default channel
 unless `--via` says otherwise. Flags inbox does not know are passed to the
 connector untouched, so `--subject` and `--cc` reach gmail.
+
+Every returned message has an opaque, self-contained `id` and an opaque
+`thread` id. A message id identifies one message within its connector account;
+a thread id identifies an independently readable email chain, chat, channel,
+or reply thread. Get thread ids from `inbox threads` or any search result.
+Use `search --thread ID` to search within one thread. `--native` enables a
+connector's advanced service syntax, such as Gmail search operators.
+“Thread” is the contract word even when the service calls the same object a
+chat, channel, or conversation.
 
 ## Policy
 

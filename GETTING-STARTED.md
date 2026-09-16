@@ -110,6 +110,21 @@ inbox send Jane --via whatsapp.default --body "On my way" --confirmed
 inbox draft jane@example.org --via gmail.work --subject Hi --body "..."
 ```
 
+Search results contain both a self-contained message `id` and a `thread` id.
+The same interface works for email chains, WhatsApp and Telegram chats, and
+future Slack channels or reply threads:
+
+```bash
+inbox threads "budget" --via gmail.work
+inbox search "approval" --thread THREAD_ID --via gmail.work
+inbox read --message MESSAGE_ID --via gmail.work
+inbox read --thread THREAD_ID --via gmail.work
+```
+
+A bare search term matches visible subject/body or chat text. Add `--from`,
+`--since`, or `--thread` for common filters. `--native` opts into a
+connector's advanced service syntax, such as Gmail operators.
+
 Registration copies each account's address and default flag when first creating
 its channel; a single account becomes default automatically. Existing defaults
 are preserved. With multiple accounts and no default, pass `--via` explicitly.
@@ -135,6 +150,7 @@ channel when you want to.
 
 ```bash
 inbox recent --since 24h --incoming        everything that came in, all channels
+inbox threads "budget" --via gmail.work
 inbox search "invoice" --via gmail.work
 inbox read "Jane"                          one person across channels
 inbox draft jane@example.org --via gmail.work --subject Hi --body "..."

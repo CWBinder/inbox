@@ -29,7 +29,7 @@ class RegistrationTests(unittest.TestCase):
         self.clear()
         self.addCleanup(self.clear)
         self.caps = {'connector': 'slack', 'version': '1', 'account_flag': '--account',
-                     'verbs': ['accounts', 'search', 'read', 'send', 'resolve']}
+                     'verbs': ['accounts', 'threads', 'search', 'read', 'send', 'resolve']}
         self.accounts = [{'name': 'qmt', 'address': 'user@example.org', 'ok': True, 'default': True},
                          {'name': 'personal', 'address': 'personal@example.org', 'ok': True}]
         self.executable = self.root / 'my-slack-cli'
@@ -47,13 +47,32 @@ class RegistrationTests(unittest.TestCase):
 import json, sys
 payload = json.loads({json.dumps(payload)!r})
 args = sys.argv[1:]
-if args[0] == 'capabilities':
+verb = next((word for word in ('capabilities', 'accounts', 'threads', 'search', 'read', 'resolve') if word in args), args[0])
+if verb == 'capabilities':
     print(json.dumps(payload['capabilities']))
-elif args[0] == 'accounts':
+elif verb == 'accounts':
     print({broken!r} if {broken is not None!r} else json.dumps(payload['accounts']))
-elif args[0] == 'search':
-    account = args[args.index('--account') + 1]
-    print(json.dumps([{{'id': 'message-1', 'account': account, 'text': 'Found', 'when': '2026-09-16'}}]))
+elif verb == 'threads':
+    print(json.dumps([{{'id': 'thread-1', 'account': args[-2], 'name': 'Project',
+                       'type': 'channel', 'participants': [], 'when': '2026-09-16T10:00:00+00:00',
+                       'snippet': 'Found', 'message_count': 1}}]))
+elif verb == 'search':
+    flag = '--account' if '--account' in args else '--profile'
+    account = args[args.index(flag) + 1]
+    print(json.dumps([{{'id': 'message-1', 'account': account, 'text': 'Found',
+                       'when': '2026-09-16T10:00:00+00:00', 'from': 'alice', 'from_name': 'Alice',
+                       'to': ['me'], 'subject': '', 'unread': None, 'thread': 'thread-1',
+                       'attachments': [], 'argv': args}}]))
+elif verb == 'read':
+    flag = '--account' if '--account' in args else '--profile'
+    account = args[args.index(flag) + 1]
+    print(json.dumps([{{'id': 'message-1', 'account': account, 'text': 'Full',
+                       'when': '2026-09-16T10:00:00+00:00', 'from': 'alice', 'from_name': 'Alice',
+                       'to': ['me'], 'subject': '', 'unread': None, 'thread': 'thread-1',
+                       'attachments': [], 'argv': args}}]))
+elif verb == 'resolve':
+    print(json.dumps({{'ok': True, 'address': 'alice', 'name': 'Alice',
+                       'candidates': [{{'address': 'alice', 'name': 'Alice'}}]}}))
 else:
     print(json.dumps({{'args': args}}))
 ''')
@@ -77,7 +96,7 @@ else:
         for account in ('qmt', 'personal'):
             ok, response, _, _ = connectors.run(config.channel('slack.' + account), 'read', 'message-1')
             self.assertTrue(ok)
-            self.assertEqual(response['args'], ['read', 'message-1', '--account', account, '--json'])
+            self.assertEqual(response[0]['argv'], ['read', 'message-1', '--account', account, '--json'])
         passthrough = cli.build_parser().parse_args(['slack', '--via', 'slack.personal', 'contacts'])
         self.assertEqual(passthrough.via, 'slack.personal')
 
@@ -88,7 +107,7 @@ else:
             self.run_cli('connector', 'add', 'my-slack-cli')
         ok, result, _, _ = connectors.run(config.channel('slack.qmt'), 'read', 'm')
         self.assertTrue(ok)
-        self.assertEqual(result['args'], ['--profile', 'qmt', 'read', 'm', '--json'])
+        self.assertEqual(result[0]['argv'], ['--profile', 'qmt', 'read', 'm', '--json'])
 
     def test_fresh_install_registration_and_search_in_separate_processes(self):
         home = self.root / 'fresh-inbox'
@@ -105,6 +124,21 @@ else:
         results = json.loads(run('search', 'update', '--via', 'slack.personal', '--json'))
         self.assertEqual(results[0]['account'], 'personal')
         self.assertEqual(results[0]['channel'], 'slack.personal')
+        scoped = json.loads(run('search', 'budget', '--thread', 'thread-1', '--from', 'alice',
+                                '--since', '7d', '--native', '--via', 'slack.personal', '--json'))
+        self.assertEqual(scoped[0]['argv'], [
+            'search', 'budget', '-n', '10', '--thread', 'thread-1', '--from', 'alice',
+            '--since', '7d', '--native', '--account', 'personal', '--json'])
+        threads = json.loads(run('threads', 'Project', '--via', 'slack.personal', '--json'))
+        self.assertEqual(threads[0]['id'], 'thread-1')
+        self.assertEqual(threads[0]['channel'], 'slack.personal')
+        message = json.loads(run('read', '--message', 'message-1', '--via', 'slack.personal', '--json'))
+        self.assertEqual(message[0]['text'], 'Full')
+        thread = json.loads(run('read', '--thread', 'thread-1', '--via', 'slack.personal', '--json'))
+        self.assertEqual(thread[0]['thread'], 'thread-1')
+        self.assertNotIn('-n', thread[0]['argv'])
+        legacy = json.loads(run('read', 'Alice', '--via', 'slack.personal', '--json'))
+        self.assertIn('20', legacy[0]['argv'])
 
     def test_existing_connector_alias_without_command_gets_explicit_mapping(self):
         self.config.write_text('[connectors.slack]\nalias = "sl"\n')
@@ -114,6 +148,13 @@ else:
         spec = config.load()['connectors']['slack']
         self.assertEqual(spec['alias'], 'sl')
         self.assertEqual(spec['command'], str(self.root / 'slack'))
+
+    def test_person_read_marks_mail_address_expression_as_native_query(self):
+        self.caps['features'] = {'subject': True}
+        self.make_connector()
+        self.run_cli('connector', 'add', str(self.executable))
+        result = json.loads(self.run_cli('read', 'Alice', '--via', 'slack.personal', '--json'))
+        self.assertIn('--native', result[0]['argv'])
 
     def test_repeat_registration_is_noop_and_discovers_new_accounts(self):
         self.run_cli('connector', 'add', str(self.executable))
