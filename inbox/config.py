@@ -103,7 +103,7 @@ def default_channel(connector: str) -> Channel:
     for c in chs:
         if c.default:
             return c
-    if len(chs) == 1:
+    if len({c.account for c in chs}) == 1:
         return chs[0]
     raise ConfigError(f"several channels use '{connector}' and none is default; pass --via one of: {', '.join(c.name for c in chs)}")
 

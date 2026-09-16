@@ -7,10 +7,11 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, chats, config, connectors, log, paths, policy, reminders, roles, when
+from . import __version__, chats, config, connectors, log, paths, policy, registration, reminders, roles, when
 
 CONTRACT = ("--via", "--body", "--reply-to", "--attach", "--confirmed", "--json")
 
@@ -33,7 +34,7 @@ def cmd_init(a):
         written.append(target)
     if written:
         print("wrote " + ", ".join(str(w) for w in written))
-        print("edit config.toml: your channels (one per account of each connector), and policy.toml: what may be sent.")
+        print("register accounts with `inbox connector add EXECUTABLE`; edit policy.toml to set what may be sent.")
     else:
         print(f"{paths.HOME} already set up (use --force to overwrite config and policy with the examples)")
 
@@ -90,20 +91,48 @@ def cmd_connectors(a):
 def cmd_channel(a):
     if a.channel_command == "add":
         text = paths.CONFIG.read_text(encoding="utf-8") if paths.CONFIG.is_file() else ""
-        if f"[channels.{a.name}]" in text and not a.force:
+        existing = tomllib.loads(text).get('channels', {})
+        if a.name in existing and not a.force:
             raise SystemExit(f"channel '{a.name}' exists (use --force to replace)")
-        import re
-        text = re.sub(rf"\[channels\.{re.escape(a.name)}\]\n(?:[^\[\n][^\n]*\n)*", "", text)
-        block = f"\n[channels.{a.name}]\nconnector = {json.dumps(a.connector)}\naccount = {json.dumps(a.account)}\n"
+        if a.name in existing:
+            lines = text.splitlines(keepends=True)
+            start = end = None
+            for i, line in enumerate(lines):
+                if not line.lstrip().startswith('['):
+                    continue
+                if start is not None:
+                    end = i
+                    break
+                try:
+                    header = tomllib.loads(line)
+                except tomllib.TOMLDecodeError:
+                    continue
+                if header == {'channels': {a.name: {}}}:
+                    start = i
+            if start is None:
+                raise SystemExit('Use a dedicated channel table before replacing this channel')
+            text = ''.join(lines[:start] + lines[end if end is not None else len(lines):])
+        block = f"\n[channels.{json.dumps(a.name)}]\nconnector = {json.dumps(a.connector)}\naccount = {json.dumps(a.account)}\n"
         if a.default:
             block += "default = true\n"
         if a.address:
             block += f"address = {json.dumps(a.address)}\n"
-        paths.CONFIG.write_text(text.rstrip() + "\n" + block, encoding="utf-8")
+        text = text.rstrip() + "\n" + block
+        tomllib.loads(text)
+        paths.CONFIG.write_text(text, encoding="utf-8")
+        config.load.cache_clear()
+        config.channels.cache_clear()
         print(f"channel '{a.name}' -> {a.connector}:{a.account}")
         return
     for ch in config.channels().values():
         print(f"{ch.name:<10} {ch.connector}:{ch.account:<10} {'default' if ch.default else '':<8} {ch.address or ''}")
+
+
+def cmd_connector_add(a):
+    try:
+        print('\n'.join(registration.register(a.executable, a.reserved)))
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        raise SystemExit(f"registration failed: {exc}") from exc
 
 
 # ---- recipients --------------------------------------------------------------
@@ -173,9 +202,12 @@ def cmd_resolve(a):
 # ---- cross-channel reads -----------------------------------------------------
 
 def _channels_for(via: str | None) -> list[config.Channel]:
-    if not via:
-        return list(config.channels().values())
-    return [config.channel(v.strip()) for v in via.split(",") if v.strip()]
+    selected = (list(config.channels().values()) if not via else
+                [config.channel(v.strip()) for v in via.split(",") if v.strip()])
+    unique = {}
+    for channel in selected:
+        unique.setdefault((channel.connector, channel.account), channel)
+    return list(unique.values())
 
 
 def _line(r: dict) -> str:
@@ -581,11 +613,12 @@ recipients: a channel name (me), a raw address (x@y.org, 4366...), or a contact 
 
 examples:
   inbox recent --since 24h --incoming            everything that came in, all channels
-  inbox search invoice --via qmt,personal
+  inbox connector add gmail                      discover and register gmail accounts
+  inbox search invoice --via gmail.work,gmail.personal
   inbox read BJ                                  one person, across channels
   inbox send BJ --body "See you Saturday" --confirmed
-  inbox draft x@y.org --via qmt --subject Hi --body "..."
-  inbox wa read BJ -n 30 | inbox email search "is:unread"      a connector's own commands, account chosen for you
+  inbox draft x@y.org --via gmail.work --subject Hi --body "..."
+  inbox gmail --via gmail.work search "is:unread"   a connector's own commands
   inbox remind add pay the fee --due fri 9am --ref url:https://...""")
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -594,6 +627,12 @@ examples:
     s = sub.add_parser("status", help="every channel and connector in one check"); s.set_defaults(func=cmd_status)
     s = sub.add_parser("connectors", help="the client commands inbox talks to; --check NAME runs the conformance test")
     s.add_argument("--check", metavar="CONNECTOR"); s.set_defaults(func=cmd_connectors)
+
+    s = sub.add_parser("connector", help="register accounts automatically as connector.account")
+    cs = s.add_subparsers(dest="connector_command", required=True)
+    c = cs.add_parser("add", help="discover a connector executable and register all its accounts")
+    c.add_argument("executable", help="executable on PATH or full path")
+    c.set_defaults(func=cmd_connector_add)
 
     s = sub.add_parser("channel", help="your channels: list, or add NAME --connector X --account Y")
     cs = s.add_subparsers(dest="channel_command")
@@ -693,6 +732,15 @@ examples:
 
     s = sub.add_parser("policy", help="show the send rules"); s.set_defaults(func=cmd_policy)
     s = sub.add_parser("log", help="everything sent, drafted, saved or refused"); s.add_argument("--since"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_log)
+    reserved = set(sub.choices)
+    try:
+        reserved -= set(config.connectors())
+    except config.ConfigError:
+        pass
+    # Built-in command names are always reserved, even in a malformed config.
+    reserved.update(('init', 'status', 'connectors', 'connector', 'channel', 'search', 'recent',
+                     'read', 'resolve', 'send', 'draft', 'remind', 'remote', 'chat', 'agent', 'policy', 'log'))
+    p.set_defaults(reserved=reserved)
     return p
 
 

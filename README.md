@@ -37,40 +37,44 @@ installed command uses its source code. If `~/.local/bin` is not on `PATH`, add
 Install the connector CLIs you want on `PATH`: for example [gmail](../gmail),
 [whatsapp](../whatsapp), and [telegram](../telegram). A connector is the
 software; an account is one login or bot known to that software; a channel is
-your Inbox name for one connector account:
+automatically named `connector.account`:
 
 ```text
-work  → gmail connector → work account
-me    → whatsapp connector → default account
-bot   → telegram connector → assistant account
+gmail.work          → gmail connector → work account
+whatsapp.default    → whatsapp connector → default account
+telegram.assistant  → telegram connector → assistant account
 ```
 
-There is no separate connector-registration command. Once its executable is on
-`PATH`, verify the contract and add a channel for one account it reports:
+Register an installed, configured connector with one command:
 
 ```bash
-gmail accounts
-inbox connectors --check gmail
-inbox channel add work --connector gmail --account work --default
-
-whatsapp accounts
-inbox channel add me   --connector whatsapp --account default --default --address 4412345678
+inbox connector add gmail
+inbox connector add whatsapp
 inbox status                  # every channel checked through its connector
 ```
 
-`--default` means that channel may be used when `--via` is omitted for that
-connector. `--address` is your own address on that service, needed when the
-channel name itself (such as `me`) is used as a recipient.
+Inbox reads `capabilities` and `accounts --json`, validates the discovery
+responses, and saves the executable and every account in `~/.inbox/config.toml`.
+For a Slack connector reporting account `qmt`, use `--via slack.qmt`. If its
+executable is called `my-slack-cli`, register with `inbox connector add my-slack-cli`;
+the reported connector name still determines `slack.qmt`.
+
+Re-running registration adds newly discovered accounts and preserves existing
+settings. Unavailable accounts are registered with a status warning. An account's
+reported address and default status are copied when first registered; a sole
+account becomes default. Existing defaults take precedence. Existing custom names
+remain usable, and their sending restrictions are inherited by the new canonical
+names. `inbox channel add` remains available for manual configuration.
 
 ## Vocabulary
 
 - **connector**: a client command that talks to one service and speaks the
-  contract in [CONNECTORS.md](CONNECTORS.md). Conformance is membership;
-  nothing is registered. `inbox connectors --check NAME` tests one.
+  contract in [CONNECTORS.md](CONNECTORS.md). `inbox connector add EXECUTABLE`
+  discovers its accounts. `inbox connectors --check NAME` tests one.
 - **account**: the connector's own name for one set of credentials
   (`gmail accounts`, `whatsapp accounts`).
-- **channel**: your name for one account of one connector. The only thing
-  you type to say where: `--via qmt`, `--via claude`.
+- **channel**: one connector account, named `connector.account`:
+  `--via gmail.work`, `--via telegram.assistant`.
 
 ## Commands
 
@@ -84,8 +88,8 @@ inbox resolve WHO                                     which channel and address 
 inbox send WHO [--via CH] --body TEXT [--reply-to ID] [--attach FILE] [--confirmed] [connector flags]
 inbox draft WHO [--via CH] --body TEXT ...            on channels that have drafts
 
-inbox email [--via CH] SUB ...                        a connector's own commands, account chosen for you
-inbox wa    [--via CH] SUB ...                        (aliases from config; the connector's name works too)
+inbox gmail    [--via CH] SUB ...                     a connector's own commands, account chosen for you
+inbox whatsapp [--via CH] SUB ...                     (optional aliases can be set in config)
 
 inbox remind add TEXT --due WHEN [--ref K:V]...       'fri 9am', 'tomorrow 18:30', 'in 2h'
 inbox remind list [--due-within 2d] | run [--dry-run] | done ID | snooze ID --until WHEN
@@ -98,6 +102,7 @@ inbox remote hide agent NAME-OR-ROLE
 inbox remote hide conversation NAME
 
 inbox status | connectors | channel list | policy | log [--since 7d]
+inbox connector add EXECUTABLE                        register discovered connector.account channels
 ```
 
 Recipients are a channel name (`me`), a raw address (`x@y.org`, `4366...`),

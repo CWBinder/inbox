@@ -77,85 +77,72 @@ telegram accounts            # ok: claude   @yourbot
 In every case, the test is the same: `<client> accounts` lists at least one
 account and says ok.
 
-## 3. Declare your channels
+## 3. Register connectors
 
-This is the only registration step inside Inbox. Keep these three things
-separate:
-
-```text
-connector   installed program that knows how to speak to a service
-account     one login, profile or bot configured inside that program
-channel     your Inbox name for one connector + account pair
-```
-
-For example, suppose the connector commands report:
-
-```text
-whatsapp accounts  → account: default
-gmail accounts     → account: default
-telegram accounts  → account: claude
-```
-
-Create one channel for each account you want Inbox to use:
+After installing and authenticating each connector, run:
 
 ```bash
-inbox channel add me   --connector whatsapp --account default --default --address 4412345678
-inbox channel add work --connector gmail    --account default --default
-inbox channel add claude --connector telegram --account claude      # reminders go out from here
+inbox connector add whatsapp
+inbox connector add gmail
+inbox connector add telegram
+inbox channel list
 inbox status
 ```
 
-These commands write mappings equivalent to:
+Inbox asks each executable for `capabilities` and `accounts --json`, then
+writes its command mapping and channels into `~/.inbox/config.toml`. Each
+channel is named `connector.account`. You do not choose another Inbox name.
+For example:
 
-```toml
-[channels.me]
-connector = "whatsapp"
-account = "default"
-default = true
-address = "4412345678"
-
-[channels.work]
-connector = "gmail"
-account = "default"
-default = true
+```text
+whatsapp + default → whatsapp.default
+gmail + work       → gmail.work
+telegram + claude  → telegram.claude
 ```
 
-There is no separate `connector add`: using a connector in a channel makes it
-known to Inbox. By default its connector name is also its executable name, so
-`connector = "gmail"` means Inbox runs the `gmail` command on `PATH`.
-
-`--default` applies within one connector. It lets `inbox email search ...` use
-`work` when `--via work` is omitted. `--address` records your own address on
-that service, allowing the channel name itself (`me`) to be resolved as a
-recipient. `status` asks every connector about every declared account; when
-every line says `ok`, setup is complete.
-
-You now use the channel name with the shared commands:
+These account names are examples: use the channels printed by registration.
+If the WhatsApp connector reports `default`, its channel is `whatsapp.default`;
+getting `whatsapp.me` requires an account named `me` in the connector itself.
 
 ```bash
-inbox search "invoice" --via work
-inbox send Jane --via me --body "On my way" --confirmed
-inbox draft jane@example.org --via work --subject Hi --body "..."
+inbox search "invoice" --via gmail.work
+inbox send Jane --via whatsapp.default --body "On my way" --confirmed
+inbox draft jane@example.org --via gmail.work --subject Hi --body "..."
 ```
+
+Registration copies each account's address and default flag when first creating
+its channel; a single account becomes default automatically. Existing defaults
+are preserved. With multiple accounts and no default, pass `--via` explicitly.
+
+Run the same registration command after adding another account to a connector.
+It adds newly discovered accounts and preserves existing settings and legacy
+channel names. Accounts reported as unavailable are also registered, with a
+warning to check their authentication or connector status. Malformed discovery
+responses and conflicting mappings fail without changing configuration.
+
+Registration does not configure reminder delivery. If using a Telegram bot,
+set `[reminders]` in `~/.inbox/config.toml` to its registered channel and a
+recipient address recognized by that connector. See [REMINDERS.md](REMINDERS.md).
 
 ## 4. Decide what may be sent
 
 Open `~/.inbox/policy.toml`. The example is a sensible start: every send
-needs `--confirmed`, mail is draft-only, nothing destructive. Relax it per
+needs `--confirmed`, the example Gmail work/personal channels are draft-only,
+and destructive operations are denied. Relax it per
 channel when you want to.
 
 ## 5. Use it
 
 ```bash
 inbox recent --since 24h --incoming        everything that came in, all channels
-inbox search "invoice" --via work
+inbox search "invoice" --via gmail.work
 inbox read "Jane"                          one person across channels
-inbox draft jane@example.org --via work --subject Hi --body "..."
+inbox draft jane@example.org --via gmail.work --subject Hi --body "..."
 inbox send Jane --body "On my way" --confirmed
 ```
 
-`inbox -h` lists the rest. `inbox wa ...` and `inbox email ...` reach a
-connector's own commands with the account chosen for you.
+`inbox -h` lists the rest. For connector-specific commands, use
+`inbox gmail --via gmail.work SUBCOMMAND` (or another registered connector).
 
 ## When something fails
 
@@ -165,7 +152,7 @@ connector's own commands with the account chosen for you.
 - `refused: policy: ...` is inbox declining on purpose. Read
   `~/.inbox/policy.toml`; pass `--confirmed` only when a person approved
   this exact message.
-- `unknown channel` means a typo or a missing `channel add`; `inbox channel
+- `unknown channel` means a typo or a missing `connector add`; `inbox channel
   list` shows what exists.
 - `inbox connectors --check whatsapp` tests a client against the contract
   and names what is missing, which is where to look when a new or updated
@@ -173,28 +160,24 @@ connector's own commands with the account chosen for you.
 
 ## Adding a service nobody has written a client for
 
-Write a command that speaks [CONNECTORS.md](CONNECTORS.md): six verbs, one
-JSON record, an account selector. If the new executable is called `matrix`:
+Write an executable that follows [CONNECTORS.md](CONNECTORS.md). If it is
+called `matrix-cli` and reports connector `matrix` and account `personal`:
 
 ```bash
-matrix accounts
+inbox connector add matrix-cli
 inbox connectors --check matrix
-inbox channel add matrix-personal --connector matrix --account default --default
-inbox status
+inbox search "project update" --via matrix.personal
 ```
 
-Inbox now knows `matrix` because the `matrix-personal` channel uses it. If the
-executable has a different name, or you want a short pass-through alias, add a
-connector block to `~/.inbox/config.toml` before adding the channel:
+You can also pass the executable's full path. Registration records its resolved
+path, so the executable name can differ from the reported connector name.
+The connector owns authentication and account naming. Inbox needs no
+service-specific code. Connector and account names must start with a lowercase
+letter and contain only lowercase letters, digits, hyphens, or underscores.
 
-```toml
-[connectors.matrix]
-command = "matrix-cli"
-alias = "mx"
-```
-
-Then `inbox matrix ...` and `inbox mx ...` both run `matrix-cli` with the
-account selected by `--via`. Inbox itself needs no service-specific code.
+For existing installations, custom channel names continue to work. The manual
+`inbox channel add NAME --connector CONNECTOR --account ACCOUNT` command remains
+available, but is no longer needed for normal setup.
 
 ## Updating Inbox
 

@@ -3,64 +3,70 @@
 A connector is a command on PATH that talks to one messaging service and
 speaks the verbs below. inbox never imports it: it builds a command line from
 a channel's connector and account, runs it, and parses the JSON. Any language
-qualifies. Conformance is membership; there is no registration.
+qualifies. `inbox connector add EXECUTABLE` discovers and registers its accounts.
 
 Two existing connectors are the reference: the [whatsapp](../whatsapp) and
 [gmail](../gmail) clients. `inbox connectors --check NAME` runs this contract
 against an installed connector and reports what is missing.
 
-## Install a connector, then register a channel
+## Automatic registration
 
-These are two separate operations:
-
-1. **Install the connector CLI.** Its executable must be on `PATH`.
-2. **Register a channel in Inbox.** A channel gives one connector account a
-   short local name.
-
-For a connector whose executable is named `matrix`:
+Install and authenticate the connector first, then register its executable:
 
 ```bash
-# Ask the connector which accounts are available.
-matrix accounts
-
-# Verify that Inbox can run it and understands its protocol.
-inbox connectors --check matrix
-
-# Register the connector account as an Inbox channel.
-inbox channel add matrix-personal \
-  --connector matrix \
-  --account default \
-  --default
+inbox connector add matrix-cli
 ```
 
-Inbox automatically looks for an executable with the same name as the
-connector. If the executable has a different name, add the command mapping to
-`~/.inbox/config.toml`:
+Inbox resolves the executable on PATH (or accepts its full path), invokes
+`capabilities` and `accounts --json`, and records the resolved executable path.
+If these report connector `matrix` and account `personal`, it writes:
 
 ```toml
 [connectors.matrix]
-command = "matrix-cli"
-alias = "mx"
+command = "/path/to/matrix-cli"
+
+[channels."matrix.personal"]
+connector = "matrix"
+account = "personal"
 ```
 
-Then register the channel with `--connector matrix` as above.
+Names must start with a lowercase letter and contain only lowercase letters,
+digits, hyphens or underscores. Dots separate connector and account names;
+they cannot occur within either identifier. Connector names cannot collide with
+Inbox commands or other connectors' aliases. Names come from the connector;
+Inbox never silently lowercases or renames an account.
 
-The names have distinct purposes:
-
-- `matrix` is the connector type and normally the executable name.
-- `default` is an account reported by that connector.
-- `matrix-personal` is the name you choose for using that account through
-  Inbox.
-
-After registration, shared Inbox commands refer to the channel name:
+After registration:
 
 ```bash
-inbox search "project update" --via matrix-personal
-inbox send alice --via matrix-personal --body "Hello" --confirmed
+inbox search "project update" --via matrix.personal
+inbox matrix --via matrix.personal contacts
 ```
 
-`inbox channel add` does not install software or sign in to a service. It only
-writes the connector/account binding to Inbox's configuration.
+Registration validates required operations, the account flag and its position,
+unique account names, and boolean account status/default fields. Empty or malformed
+discovery results and conflicting mappings leave configuration unchanged. Discovery
+has a 30-second timeout per command and does not send or read messages. It is not
+a full end-to-end conformance test; `inbox connectors --check NAME` adds read checks.
+
+Every discovered account is registered, including unavailable ones, whose status
+is printed. `accounts --json` may exit 1 with a valid account list containing
+`ok: false`; an unavailable account's address may be null. Other failed discovery
+commands abort registration. Addresses and default flags are copied on initial registration;
+a single account defaults automatically, and existing defaults take precedence.
+Re-register to add new accounts. Existing channels and settings are preserved;
+removed connector accounts are not automatically deleted from Inbox.
+
+Existing custom names remain usable. A new canonical channel referring to an
+existing custom channel stores `policy_channel = "old-name"`, inheriting its
+policy; explicit rules on the canonical name override corresponding inherited
+fields. Registration refuses ambiguous multiple legacy names for the same account.
+Cross-channel reads query each connector/account pair once.
+
+Registration does not install software, authenticate, or access credential files.
+`inbox channel add NAME --connector CONNECTOR --account ACCOUNT` remains supported
+for manual mappings. Canonical names are quoted in TOML because dots otherwise
+create nested tables.
 
 ## Accounts
 

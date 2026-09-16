@@ -8,10 +8,10 @@
 send = "confirm"
 destructive = "deny"           # trash, draft-delete
 
-[channels.work]
+[channels."gmail.work"]
 send = "draft-only"            # agents draft; the person sends
 
-[channels.personal]
+[channels."gmail.personal"]
 send = "draft-only"
 
 # The assistant's number may message you, and only you, without asking.

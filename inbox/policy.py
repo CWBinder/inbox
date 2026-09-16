@@ -54,7 +54,10 @@ def _decide(level: str, confirmed: bool, what: str) -> Verdict:
 
 
 def _channel_rules(name: str) -> dict:
-    return load().get("channels", {}).get(name, {})
+    rules = load().get("channels", {})
+    source = config.load().get('channels', {}).get(name, {}).get('policy_channel')
+    # A canonical name must retain restrictions applied to an existing alias.
+    return {**rules.get(source, {}), **rules.get(name, {})}
 
 
 def send(channel: config.Channel, recipient: str, confirmed: bool) -> Verdict:

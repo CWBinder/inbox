@@ -1,40 +1,24 @@
-# inbox config. Lives in ~/.inbox/config.toml. Personal: never commit it anywhere public.
-#
-# A CHANNEL is your name for one account of one connector. A CONNECTOR is a client
-# command on PATH that speaks the contract (CONNECTORS.md). An ACCOUNT is that
-# client's own name for one set of credentials.
-
+# Inbox configuration: ~/.inbox/config.toml. Keep personal configuration private.
 [me]
 name = "Your Name"
 
-[connectors.gmail]
-alias = "email"                # `inbox email ...` reaches the gmail client
+# Authenticate a connector using its own setup, then run:
+#   inbox connector add gmail
+#   inbox connector add whatsapp
+#   inbox connector add telegram
+# Inbox discovers accounts and adds connector.account channels automatically.
+# For an account named "work", the generated mapping looks like:
+# [connectors.gmail]
+# command = "/path/to/gmail"
+# alias = "email"              # optional pass-through alias: inbox email ...
+# [channels."gmail.work"]
+# connector = "gmail"
+# account = "work"
+# default = true
+# address = "you@example.org"
 
-[connectors.whatsapp]
-alias = "wa"
-
-[channels.work]
-connector = "gmail"
-account = "work"               # a name from `gmail accounts`
-default = true                 # `--via` may be omitted for mail
-
-[channels.personal]
-connector = "gmail"
-account = "personal"
-
-[channels.me]
-connector = "whatsapp"
-account = "default"            # a profile from `whatsapp accounts`
-default = true
-address = "4412345678"         # your own number; "me" as a recipient resolves to it
-
-# A second linked number the assistant messages you from. Needs its own
-# profile in the whatsapp client (see its README, "Profiles").
-# [channels.claude]
-# connector = "whatsapp"
-# account = "claude"
-
-[reminders]
-via = "claude"                 # reminders go out from this channel ...
-to = "me"                      # ... to this channel's address
-# compose = true               # let an agent write each message (needs `claude` on PATH)
+# Configure these after registering the appropriate connector accounts.
+# [reminders]
+# via = "telegram.assistant"
+# to = "telegram.assistant"    # or an address recognized by that connector
+# compose = true
